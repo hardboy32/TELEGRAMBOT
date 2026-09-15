@@ -174,9 +174,6 @@ def register(app, config):
 
         user_id = message.from_user.id
 
-        if admin(user_id, config):
-            return
-
         add_or_update_user(
             user_id,
             message.from_user.username,
@@ -605,9 +602,6 @@ def register(app, config):
     async def receipt_handler(client, message):
 
         user_id = message.from_user.id
-
-        if admin(user_id, config):
-            return
 
         state = user_states.get(user_id)
 
