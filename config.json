@@ -1,0 +1,32 @@
+{
+    "api_id": 12345678,
+    "api_hash": "YOUR_API_HASH",
+    "bot_token": "YOUR_BOT_TOKEN",
+
+    "admin_ids": [
+        6422159617
+    ],
+
+    "channel_username": "@YOUR_CHANNEL",
+
+    "payment_card": "0000-0000-0000-0000",
+    "payment_name": "نام صاحب کارت",
+
+    "bot_name": "کافه هرمس",
+
+    "low_volume_gb": 1,
+
+    "hermes_check_enabled": true,
+
+    "welcome_enabled": true,
+    "referral_enabled": true,
+    "coupon_enabled": true,
+    "order_history_enabled": true,
+    "subscription_enabled": true,
+    "renew_enabled": true,
+    "support_enabled": true,
+    "tutorial_enabled": true,
+    "free_test_enabled": false,
+    "festival_enabled": false,
+    "low_volume_notification_enabled": true
+}
