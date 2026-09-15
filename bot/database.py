@@ -1,17 +1,21 @@
 import sqlite3
+import os
 from datetime import datetime
-from pathlib import Path
 
 
-DB_PATH = Path("data/bot.db")
+DB_PATH = "data/cafe_hermes.db"
+
+
+def now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def get_connection():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs("data", exist_ok=True)
 
     conn = sqlite3.connect(
         DB_PATH,
-        check_same_thread=False
+        timeout=30
     )
 
     conn.row_factory = sqlite3.Row
@@ -19,16 +23,11 @@ def get_connection():
     return conn
 
 
-# =========================================================
-# مقداردهی اولیه دیتابیس
-# =========================================================
-
 def init_db():
-
     conn = get_connection()
+
     cur = conn.cursor()
 
-    # کاربران
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY,
@@ -42,7 +41,6 @@ def init_db():
         )
     """)
 
-    # سرویس‌ها
     cur.execute("""
         CREATE TABLE IF NOT EXISTS services (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,7 +51,6 @@ def init_db():
         )
     """)
 
-    # سفارش‌ها
     cur.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,7 +70,6 @@ def init_db():
         )
     """)
 
-    # اشتراک‌ها
     cur.execute("""
         CREATE TABLE IF NOT EXISTS subscriptions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,7 +85,6 @@ def init_db():
         )
     """)
 
-    # کدهای تخفیف
     cur.execute("""
         CREATE TABLE IF NOT EXISTS coupons (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,7 +97,6 @@ def init_db():
         )
     """)
 
-    # تنظیمات
     cur.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -110,14 +104,25 @@ def init_db():
         )
     """)
 
-    # دعوت‌های موفق
     cur.execute("""
         CREATE TABLE IF NOT EXISTS referral_success (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             inviter_id INTEGER NOT NULL,
-            invited_id INTEGER NOT NULL UNIQUE,
-            order_id INTEGER UNIQUE,
-            created_at TEXT
+            invited_id INTEGER NOT NULL,
+            order_id INTEGER,
+            created_at TEXT,
+            UNIQUE(inviter_id, invited_id)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS referral_rewards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            volume_gb INTEGER DEFAULT 10,
+            status TEXT DEFAULT 'pending',
+            created_at TEXT,
+            applied_at TEXT
         )
     """)
 
@@ -125,47 +130,32 @@ def init_db():
     conn.close()
 
 
-# =========================================================
-# کاربران
-# =========================================================
-
 def add_or_update_user(
     user_id,
     username=None,
     first_name=None,
     referral_by=None
 ):
-
     conn = get_connection()
     cur = conn.cursor()
 
-    old = cur.execute(
-        "SELECT id, referral_by FROM users WHERE id = ?",
+    existing = cur.execute(
+        "SELECT * FROM users WHERE id = ?",
         (user_id,)
     ).fetchone()
 
-    if old:
-
-        current_referral = old["referral_by"]
-
-        if current_referral is None and referral_by:
-            current_referral = referral_by
-
+    if existing:
         cur.execute("""
             UPDATE users
             SET username = ?,
-                first_name = ?,
-                referral_by = ?
+                first_name = ?
             WHERE id = ?
         """, (
             username,
             first_name,
-            current_referral,
             user_id
         ))
-
     else:
-
         cur.execute("""
             INSERT INTO users (
                 id,
@@ -179,7 +169,7 @@ def add_or_update_user(
             user_id,
             username,
             first_name,
-            datetime.now().isoformat(),
+            now(),
             referral_by
         ))
 
@@ -188,7 +178,6 @@ def add_or_update_user(
 
 
 def get_user(user_id):
-
     conn = get_connection()
 
     row = conn.execute(
@@ -202,7 +191,6 @@ def get_user(user_id):
 
 
 def get_all_user_ids():
-
     conn = get_connection()
 
     rows = conn.execute(
@@ -215,7 +203,6 @@ def get_all_user_ids():
 
 
 def get_users_count():
-
     conn = get_connection()
 
     row = conn.execute(
@@ -227,15 +214,12 @@ def get_users_count():
     return row["count"]
 
 
-# =========================================================
-# سرویس‌ها
-# =========================================================
-
 def add_service(name, volume_gb, price):
-
     conn = get_connection()
 
-    conn.execute("""
+    cur = conn.cursor()
+
+    cur.execute("""
         INSERT INTO services (
             name,
             volume_gb,
@@ -249,29 +233,29 @@ def add_service(name, volume_gb, price):
         price
     ))
 
+    service_id = cur.lastrowid
+
     conn.commit()
     conn.close()
 
+    return service_id
+
 
 def get_services(active_only=True):
-
     conn = get_connection()
 
     if active_only:
-
         rows = conn.execute("""
             SELECT *
             FROM services
             WHERE active = 1
-            ORDER BY volume_gb ASC
+            ORDER BY id ASC
         """).fetchall()
-
     else:
-
         rows = conn.execute("""
             SELECT *
             FROM services
-            ORDER BY id DESC
+            ORDER BY id ASC
         """).fetchall()
 
     conn.close()
@@ -280,7 +264,6 @@ def get_services(active_only=True):
 
 
 def get_service(service_id):
-
     conn = get_connection()
 
     row = conn.execute(
@@ -294,25 +277,29 @@ def get_service(service_id):
 
 
 def toggle_service(service_id):
-
     conn = get_connection()
 
-    conn.execute("""
-        UPDATE services
-        SET active = CASE
-            WHEN active = 1 THEN 0
-            ELSE 1
-        END
-        WHERE id = ?
-    """, (service_id,))
+    row = conn.execute(
+        "SELECT active FROM services WHERE id = ?",
+        (service_id,)
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        return False
+
+    new_value = 0 if row["active"] else 1
+
+    conn.execute(
+        "UPDATE services SET active = ? WHERE id = ?",
+        (new_value, service_id)
+    )
 
     conn.commit()
     conn.close()
 
+    return bool(new_value)
 
-# =========================================================
-# سفارش‌ها
-# =========================================================
 
 def create_order(
     user_id,
@@ -325,7 +312,6 @@ def create_order(
     final_price,
     coupon=None
 ):
-
     conn = get_connection()
 
     cur = conn.cursor()
@@ -355,7 +341,7 @@ def create_order(
         discount_percent,
         final_price,
         coupon,
-        datetime.now().isoformat()
+        now()
     ))
 
     order_id = cur.lastrowid
@@ -367,7 +353,6 @@ def create_order(
 
 
 def get_order(order_id):
-
     conn = get_connection()
 
     row = conn.execute("""
@@ -382,14 +367,13 @@ def get_order(order_id):
 
 
 def get_pending_orders():
-
     conn = get_connection()
 
     rows = conn.execute("""
         SELECT *
         FROM orders
         WHERE status = 'pending'
-        ORDER BY id DESC
+        ORDER BY id ASC
     """).fetchall()
 
     conn.close()
@@ -398,21 +382,18 @@ def get_pending_orders():
 
 
 def get_orders_count():
-
     conn = get_connection()
 
-    row = conn.execute("""
-        SELECT COUNT(*) AS count
-        FROM orders
-    """).fetchone()
+    row = conn.execute(
+        "SELECT COUNT(*) AS count FROM orders"
+    ).fetchone()
 
     conn.close()
 
     return row["count"]
 
 
-def set_receipt(order_id, receipt_file_id):
-
+def set_receipt(order_id, file_id):
     conn = get_connection()
 
     conn.execute("""
@@ -420,7 +401,7 @@ def set_receipt(order_id, receipt_file_id):
         SET receipt_file_id = ?
         WHERE id = ?
     """, (
-        receipt_file_id,
+        file_id,
         order_id
     ))
 
@@ -429,7 +410,6 @@ def set_receipt(order_id, receipt_file_id):
 
 
 def approve_order(order_id):
-
     conn = get_connection()
 
     conn.execute("""
@@ -438,7 +418,7 @@ def approve_order(order_id):
             approved_at = ?
         WHERE id = ?
     """, (
-        datetime.now().isoformat(),
+        now(),
         order_id
     ))
 
@@ -447,7 +427,6 @@ def approve_order(order_id):
 
 
 def reject_order(order_id):
-
     conn = get_connection()
 
     conn.execute("""
@@ -461,7 +440,6 @@ def reject_order(order_id):
 
 
 def get_user_orders(user_id):
-
     conn = get_connection()
 
     rows = conn.execute("""
@@ -476,90 +454,57 @@ def get_user_orders(user_id):
     return [dict(row) for row in rows]
 
 
-# =========================================================
-# اشتراک‌ها
-# =========================================================
-
 def save_subscription(
     user_id,
     order_id,
     service_name,
     username,
-    subscription_url,
-    config_text
+    subscription_url=None,
+    config_text=None
 ):
-
     conn = get_connection()
 
-    now = datetime.now().isoformat()
+    cur = conn.cursor()
 
-    # اگر برای این سفارش قبلاً اشتراک ثبت شده،
-    # همان را بروزرسانی می‌کنیم.
-    old = conn.execute("""
-        SELECT id
-        FROM subscriptions
-        WHERE order_id = ?
-    """, (order_id,)).fetchone()
-
-    if old:
-
-        conn.execute("""
-            UPDATE subscriptions
-            SET service_name = ?,
-                username = ?,
-                subscription_url = ?,
-                config_text = ?,
-                status = 'active',
-                updated_at = ?
-            WHERE order_id = ?
-        """, (
-            service_name,
-            username,
-            subscription_url,
-            config_text,
-            now,
-            order_id
-        ))
-
-    else:
-
-        conn.execute("""
-            INSERT INTO subscriptions (
-                user_id,
-                order_id,
-                service_name,
-                username,
-                subscription_url,
-                config_text,
-                status,
-                created_at,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
-        """, (
+    cur.execute("""
+        INSERT INTO subscriptions (
             user_id,
             order_id,
             service_name,
             username,
             subscription_url,
             config_text,
-            now,
-            now
-        ))
+            status,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+    """, (
+        user_id,
+        order_id,
+        service_name,
+        username,
+        subscription_url,
+        config_text,
+        now(),
+        now()
+    ))
+
+    subscription_id = cur.lastrowid
 
     conn.commit()
     conn.close()
 
+    return subscription_id
+
 
 def get_user_subscriptions(user_id):
-
     conn = get_connection()
 
     rows = conn.execute("""
         SELECT *
         FROM subscriptions
         WHERE user_id = ?
-        AND status = 'active'
         ORDER BY id DESC
     """, (user_id,)).fetchall()
 
@@ -569,7 +514,6 @@ def get_user_subscriptions(user_id):
 
 
 def get_subscription(subscription_id):
-
     conn = get_connection()
 
     row = conn.execute("""
@@ -583,11 +527,7 @@ def get_subscription(subscription_id):
     return dict(row) if row else None
 
 
-def update_subscription_status(
-    subscription_id,
-    status
-):
-
+def update_subscription_status(subscription_id, status):
     conn = get_connection()
 
     conn.execute("""
@@ -597,7 +537,7 @@ def update_subscription_status(
         WHERE id = ?
     """, (
         status,
-        datetime.now().isoformat(),
+        now(),
         subscription_id
     ))
 
@@ -605,51 +545,52 @@ def update_subscription_status(
     conn.close()
 
 
-# =========================================================
-# کد تخفیف
-# =========================================================
-
 def create_coupon(
     code,
     percent,
     max_uses=0,
     expires_at=None
 ):
-
     conn = get_connection()
 
-    conn.execute("""
-        INSERT INTO coupons (
-            code,
+    try:
+        conn.execute("""
+            INSERT INTO coupons (
+                code,
+                percent,
+                max_uses,
+                expires_at,
+                active
+            )
+            VALUES (?, ?, ?, ?, 1)
+        """, (
+            code.upper(),
             percent,
             max_uses,
-            used_count,
-            active,
             expires_at
-        )
-        VALUES (?, ?, ?, 0, 1, ?)
-    """, (
-        code.upper(),
-        percent,
-        max_uses,
-        expires_at
-    ))
+        ))
 
-    conn.commit()
+        conn.commit()
+
+        result = True
+
+    except sqlite3.IntegrityError:
+        result = False
+
     conn.close()
+
+    return result
 
 
 def get_coupon(code):
-
     conn = get_connection()
 
     row = conn.execute("""
         SELECT *
         FROM coupons
         WHERE code = ?
-    """, (
-        code.upper(),
-    )).fetchone()
+          AND active = 1
+    """, (code.upper(),)).fetchone()
 
     conn.close()
 
@@ -657,43 +598,51 @@ def get_coupon(code):
 
 
 def use_coupon(code):
-
     conn = get_connection()
 
-    conn.execute("""
+    cur = conn.cursor()
+
+    row = cur.execute("""
+        SELECT *
+        FROM coupons
+        WHERE code = ?
+          AND active = 1
+    """, (code.upper(),)).fetchone()
+
+    if not row:
+        conn.close()
+        return False
+
+    if row["max_uses"] > 0 and row["used_count"] >= row["max_uses"]:
+        conn.close()
+        return False
+
+    cur.execute("""
         UPDATE coupons
         SET used_count = used_count + 1
-        WHERE code = ?
-    """, (
-        code.upper(),
-    ))
+        WHERE id = ?
+    """, (row["id"],))
 
     conn.commit()
     conn.close()
 
+    return True
+
 
 def deactivate_coupon(code):
-
     conn = get_connection()
 
     conn.execute("""
         UPDATE coupons
         SET active = 0
         WHERE code = ?
-    """, (
-        code.upper(),
-    ))
+    """, (code.upper(),))
 
     conn.commit()
     conn.close()
 
 
-# =========================================================
-# تنظیمات
-# =========================================================
-
 def set_setting(key, value):
-
     conn = get_connection()
 
     conn.execute("""
@@ -711,7 +660,6 @@ def set_setting(key, value):
 
 
 def get_setting(key, default=None):
-
     conn = get_connection()
 
     row = conn.execute("""
@@ -728,12 +676,7 @@ def get_setting(key, default=None):
     return row["value"]
 
 
-# =========================================================
-# دعوت دوستان
-# =========================================================
-
 def get_referrer(user_id):
-
     conn = get_connection()
 
     row = conn.execute("""
@@ -755,171 +698,163 @@ def record_successful_referral(
     invited_id,
     order_id
 ):
-
-    if inviter_id == invited_id:
-        return 0
-
     conn = get_connection()
 
-    # هر کاربر فقط یک بار می‌تواند
-    # برای یک دعوت‌کننده ثبت شود.
-    old = conn.execute("""
-        SELECT id
-        FROM referral_success
-        WHERE invited_id = ?
-    """, (invited_id,)).fetchone()
-
-    if old:
-
-        conn.close()
-        return 0
-
-    # سفارش هم نباید دوباره ثبت شود.
-    old_order = conn.execute("""
-        SELECT id
-        FROM referral_success
-        WHERE order_id = ?
-    """, (order_id,)).fetchone()
-
-    if old_order:
-
-        conn.close()
-        return 0
-
-    conn.execute("""
-        INSERT INTO referral_success (
+    try:
+        conn.execute("""
+            INSERT INTO referral_success (
+                inviter_id,
+                invited_id,
+                order_id,
+                created_at
+            )
+            VALUES (?, ?, ?, ?)
+        """, (
             inviter_id,
             invited_id,
             order_id,
-            created_at
-        )
-        VALUES (?, ?, ?, ?)
-    """, (
-        inviter_id,
-        invited_id,
-        order_id,
-        datetime.now().isoformat()
-    ))
-
-    conn.execute("""
-        UPDATE users
-        SET referral_success = referral_success + 1
-        WHERE id = ?
-    """, (inviter_id,))
-
-    row = conn.execute("""
-        SELECT referral_success
-        FROM users
-        WHERE id = ?
-    """, (inviter_id,)).fetchone()
-
-    count = row["referral_success"] if row else 0
-
-    # هر 5 دعوت موفق یک جایزه
-    if count >= 5:
+            now()
+        ))
 
         conn.execute("""
             UPDATE users
-            SET referral_success = referral_success - 5,
-                referral_reward_count =
-                    referral_reward_count + 1
+            SET referral_success = referral_success + 1
             WHERE id = ?
         """, (inviter_id,))
 
-        reward = 1
+        conn.commit()
 
-    else:
+        result = True
 
-        reward = 0
+    except sqlite3.IntegrityError:
+        result = False
+
+    conn.close()
+
+    return result
+
+
+def get_referral_count(user_id):
+    conn = get_connection()
+
+    row = conn.execute("""
+        SELECT COUNT(*) AS count
+        FROM referral_success
+        WHERE inviter_id = ?
+    """, (user_id,)).fetchone()
+
+    conn.close()
+
+    return row["count"]
+
+
+def get_referral_reward_count(user_id):
+    conn = get_connection()
+
+    row = conn.execute("""
+        SELECT COUNT(*) AS count
+        FROM referral_rewards
+        WHERE user_id = ?
+    """, (user_id,)).fetchone()
+
+    conn.close()
+
+    return row["count"]
+
+
+def create_referral_reward(user_id):
+    conn = get_connection()
+
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO referral_rewards (
+            user_id,
+            volume_gb,
+            status,
+            created_at
+        )
+        VALUES (?, 10, 'pending', ?)
+    """, (
+        user_id,
+        now()
+    ))
+
+    reward_id = cur.lastrowid
 
     conn.commit()
     conn.close()
 
-    return reward
+    return reward_id
 
 
-def get_referral_count(user_id):
-
+def get_pending_rewards():
     conn = get_connection()
 
-    row = conn.execute("""
-        SELECT referral_success
-        FROM users
-        WHERE id = ?
-    """, (user_id,)).fetchone()
+    rows = conn.execute("""
+        SELECT *
+        FROM referral_rewards
+        WHERE status = 'pending'
+        ORDER BY id ASC
+    """).fetchall()
 
     conn.close()
 
-    if not row:
-        return 0
-
-    return row["referral_success"]
+    return [dict(row) for row in rows]
 
 
-def get_referral_reward_count(user_id):
-
+def mark_reward_applied(reward_id):
     conn = get_connection()
 
-    row = conn.execute("""
-        SELECT referral_reward_count
-        FROM users
+    conn.execute("""
+        UPDATE referral_rewards
+        SET status = 'applied',
+            applied_at = ?
         WHERE id = ?
-    """, (user_id,)).fetchone()
+    """, (
+        now(),
+        reward_id
+    ))
 
+    conn.commit()
     conn.close()
 
-    if not row:
-        return 0
 
-    return row["referral_reward_count"]
-
-
-# =========================================================
-# هشدار کمبود حجم
-# =========================================================
-
-def get_low_volume_warned(subscription_id):
-
+def get_low_volume_warned(user_id):
     conn = get_connection()
 
     row = conn.execute("""
         SELECT low_volume_warned
         FROM users
-        WHERE id = (
-            SELECT user_id
-            FROM subscriptions
-            WHERE id = ?
-        )
-    """, (subscription_id,)).fetchone()
+        WHERE id = ?
+    """, (user_id,)).fetchone()
 
     conn.close()
 
     return bool(row["low_volume_warned"]) if row else False
 
 
-def set_low_volume_warned(
-    user_id,
-    value=1
-):
-
+def set_low_volume_warned(user_id):
     conn = get_connection()
 
     conn.execute("""
         UPDATE users
-        SET low_volume_warned = ?
+        SET low_volume_warned = 1
         WHERE id = ?
-    """, (
-        value,
-        user_id
-    ))
+    """, (user_id,))
 
     conn.commit()
     conn.close()
 
 
 def reset_low_volume_warning(user_id):
+    conn = get_connection()
 
-    set_low_volume_warned(
-        user_id,
-        0
-    )
+    conn.execute("""
+        UPDATE users
+        SET low_volume_warned = 0
+        WHERE id = ?
+    """, (user_id,))
+
+    conn.commit()
+    conn.close()
