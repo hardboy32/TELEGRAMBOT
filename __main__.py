@@ -10,19 +10,15 @@ from bot.admin_handlers import register as register_admin
 
 
 def load_config():
-    """
-    تنظیمات غیرمحرمانه از config.json
-    اطلاعات محرمانه از Environment Variables اینفرلو
-    """
 
     with open(
         "config.json",
         "r",
         encoding="utf-8"
     ) as f:
+
         config = json.load(f)
 
-    # اطلاعات محرمانه فقط از Infrlo
     api_id = os.getenv("API_ID")
     api_hash = os.getenv("API_HASH")
     bot_token = os.getenv("BOT_TOKEN")
@@ -44,13 +40,12 @@ def load_config():
 
     try:
         api_id = int(api_id)
+
     except ValueError:
         raise RuntimeError(
-            "API_ID باید یک عدد باشد."
+            "API_ID باید عدد باشد."
         )
 
-    # اضافه کردن اطلاعات محرمانه به تنظیمات
-    # فقط داخل حافظه برنامه؛ در GitHub ذخیره نمی‌شود.
     config["api_id"] = api_id
     config["api_hash"] = api_hash
     config["bot_token"] = bot_token
@@ -77,31 +72,39 @@ async def main():
         bot_token=config["bot_token"]
     )
 
-    # ثبت Handler های کاربران
     register_users(
         app,
         config
     )
 
-    # ثبت Handler های ادمین
     register_admin(
         app,
         config
     )
 
-    print("Cafe Hermes Bot started successfully.")
-
     await app.start()
 
+    print(
+        "Cafe Hermes Bot started successfully."
+    )
+
     try:
+
         await asyncio.Event().wait()
 
     except KeyboardInterrupt:
-        print("Stopping bot...")
+
+        print(
+            "Stopping bot..."
+        )
 
     finally:
+
         await app.stop()
-        print("Cafe Hermes Bot stopped.")
+
+        print(
+            "Cafe Hermes Bot stopped."
+        )
 
 
 if __name__ == "__main__":
