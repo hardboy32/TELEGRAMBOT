@@ -1,39 +1,82 @@
-import json
-from pathlib import Path
+from decimal import Decimal, ROUND_DOWN
 
 
-CONFIG_PATH = Path("config.json")
+def calc(price, percent):
+    """
+    محاسبه مبلغ تخفیف و مبلغ نهایی
+    """
+    price = int(price)
+    percent = int(percent)
 
+    if percent < 0:
+        percent = 0
 
-def load_config():
-    with open(CONFIG_PATH, "r", encoding="utf-8") as file:
-        return json.load(file)
+    if percent > 100:
+        percent = 100
 
+    discount = int(
+        (Decimal(price) * Decimal(percent) / Decimal(100))
+        .quantize(Decimal("1"), rounding=ROUND_DOWN)
+    )
 
-def format_number(number):
-    return f"{int(number):,}"
-
-
-def calculate_discount(price, percent):
-    discount = int(price * percent / 100)
     final_price = price - discount
 
     return discount, final_price
 
 
-def is_admin(user_id, config):
-    return user_id in config.get("admin_ids", [])
+def admin(uid, config):
+    return int(uid) in [
+        int(x) for x in config.get("admin_ids", [])
+    ]
 
 
-def replace_payment_info(text, config):
-    return text.replace(
-        "{PAYMENT_CARD}",
-        config.get("payment_card", "")
-    ).replace(
-        "{PAYMENT_NAME}",
-        config.get("payment_name", "")
-    )
+def referral_link(username, uid):
+    username = str(username).replace("@", "").strip()
+
+    return f"https://t.me/{username}?start=ref_{uid}"
 
 
-def make_referral_link(bot_username, user_id):
-    return f"https://t.me/{bot_username}?start=ref_{user_id}"
+def format_price(value):
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return "0"
+
+
+def safe_text(value):
+    if value is None:
+        return ""
+
+    return str(value)
+
+
+def normalize_username(username):
+    username = str(username).strip()
+
+    if username.startswith("@"):
+        username = username[1:]
+
+    return username
+
+
+def valid_username(username):
+    username = normalize_username(username)
+
+    if not username:
+        return False
+
+    if len(username) < 3 or len(username) > 32:
+        return False
+
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+
+    return all(char in allowed for char in username)
+
+
+def mask_card(card):
+    card = str(card).replace(" ", "")
+
+    if len(card) <= 8:
+        return card
+
+    return f"{card[:4]} **** **** {card[-4:]}"
