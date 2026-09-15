@@ -1,4 +1,4 @@
-from pyrogram import filters
+from pyrogram import filters, StopPropagation
 from pyrogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
@@ -234,7 +234,8 @@ def register(app, config):
     # =========================================================
 
     @app.on_message(
-        filters.private & filters.command("start")
+        filters.private & filters.command("start"),
+        group=-1
     )
     async def admin_start(client, message):
 
@@ -254,12 +255,15 @@ def register(app, config):
             reply_markup=admin_panel_keyboard()
         )
 
+        raise StopPropagation
+
     # =========================================================
     # /admin
     # =========================================================
 
     @app.on_message(
-        filters.private & filters.command("admin")
+        filters.private & filters.command("admin"),
+        group=-1
     )
     async def admin_command(client, message):
 
@@ -278,6 +282,8 @@ def register(app, config):
             reply_markup=admin_panel_keyboard()
         )
 
+        raise StopPropagation
+
     # =========================================================
     # پیام‌های متنی ادمین
     # =========================================================
@@ -285,7 +291,8 @@ def register(app, config):
     @app.on_message(
         filters.private
         & filters.text
-        & ~filters.command(["start", "admin"])
+        & ~filters.command(["start", "admin"]),
+        group=-1
     )
     async def admin_text(client, message):
 
@@ -296,7 +303,10 @@ def register(app, config):
 
         text = message.text.strip()
 
+        # =====================================================
         # دکمه ثابت پنل مدیریت
+        # =====================================================
+
         if text == "⚙️ پنل مدیریت":
 
             admin_states.pop(
@@ -309,9 +319,17 @@ def register(app, config):
                 reply_markup=admin_panel_keyboard()
             )
 
-            return
+            raise StopPropagation
 
         state = admin_states.get(user_id)
+
+        # =====================================================
+        # اگر ادمین در هیچ حالت مدیریتی نیست،
+        # پیام باید توسط user_handlers پردازش شود.
+        #
+        # این قسمت عمداً StopPropagation ندارد.
+        # بنابراین ادمین می‌تواند مثل کاربر خرید کند.
+        # =====================================================
 
         if not state:
             return
@@ -331,7 +349,7 @@ def register(app, config):
                 "💾 حجم سرویس را به GB وارد کنید:"
             )
 
-            return
+            raise StopPropagation
 
         # =====================================================
         # ساخت سرویس - حجم
@@ -351,7 +369,7 @@ def register(app, config):
                     "❌ حجم باید یک عدد مثبت باشد."
                 )
 
-                return
+                raise StopPropagation
 
             state["volume"] = volume
             state["step"] = "service_price"
@@ -360,7 +378,7 @@ def register(app, config):
                 "💰 قیمت سرویس را به تومان وارد کنید:"
             )
 
-            return
+            raise StopPropagation
 
         # =====================================================
         # ساخت سرویس - قیمت
@@ -380,7 +398,7 @@ def register(app, config):
                     "❌ قیمت باید یک عدد صحیح مثبت باشد."
                 )
 
-                return
+                raise StopPropagation
 
             name = state["name"]
             volume = state["volume"]
@@ -405,7 +423,7 @@ def register(app, config):
                 reply_markup=admin_reply_menu()
             )
 
-            return
+            raise StopPropagation
 
         # =====================================================
         # ثبت کانفیگ
@@ -428,7 +446,7 @@ def register(app, config):
                     "❌ سفارش پیدا نشد."
                 )
 
-                return
+                raise StopPropagation
 
             config_text = text
 
@@ -448,7 +466,6 @@ def register(app, config):
                 None
             )
 
-            # ارسال کانفیگ برای مشتری
             try:
 
                 await client.send_message(
@@ -468,7 +485,6 @@ def register(app, config):
                     f"Config send error: {e}"
                 )
 
-            # ثبت دعوت موفق
             referrer = get_referrer(
                 order["user_id"]
             )
@@ -514,7 +530,7 @@ def register(app, config):
                 reply_markup=admin_reply_menu()
             )
 
-            return
+            raise StopPropagation
 
         # =====================================================
         # ساخت کد تخفیف
@@ -533,7 +549,7 @@ def register(app, config):
                     "HERMES20 20 100"
                 )
 
-                return
+                raise StopPropagation
 
             code = parts[0].upper()
 
@@ -559,7 +575,7 @@ def register(app, config):
                     "❌ اطلاعات کد تخفیف نامعتبر است."
                 )
 
-                return
+                raise StopPropagation
 
             result = create_coupon(
                 code,
@@ -595,7 +611,7 @@ def register(app, config):
                     reply_markup=admin_reply_menu()
                 )
 
-            return
+            raise StopPropagation
 
         # =====================================================
         # کارت پرداخت
@@ -613,7 +629,7 @@ def register(app, config):
                 "👤 نام صاحب کارت را وارد کنید:"
             )
 
-            return
+            raise StopPropagation
 
         # =====================================================
         # نام صاحب کارت
@@ -633,7 +649,7 @@ def register(app, config):
                 reply_markup=admin_reply_menu()
             )
 
-            return
+            raise StopPropagation
 
         # =====================================================
         # پیام همگانی
@@ -677,7 +693,15 @@ def register(app, config):
                 reply_markup=admin_reply_menu()
             )
 
-            return
+            raise StopPropagation
+
+        # اگر حالت مدیریتی ناشناخته بود
+        admin_states.pop(
+            user_id,
+            None
+        )
+
+        raise StopPropagation
 
     # =========================================================
     # پنل اصلی
