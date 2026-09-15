@@ -1,32 +1,24 @@
 {
-    "api_id": 38750937,
-    "api_hash": "1475cf4971ab824518f8f30cc045d456",
-    "bot_token": "8983929427:AAHlr4tWXd_L8ync4ijeN_RFYm7_l02l02o",
-
-    "admin_ids": [
-        6422159617
-    ],
-
-    "channel_username": "@YOUR_CHANNEL",
-
-    "payment_card": "0000-0000-0000-0000",
-    "payment_name": "نام صاحب کارت",
-
-    "bot_name": "کافه هرمس",
-
-    "low_volume_gb": 1,
-
-    "hermes_check_enabled": true,
-
-    "welcome_enabled": true,
-    "referral_enabled": true,
-    "coupon_enabled": true,
-    "order_history_enabled": true,
-    "subscription_enabled": true,
-    "renew_enabled": true,
-    "support_enabled": true,
-    "tutorial_enabled": true,
-    "free_test_enabled": false,
-    "festival_enabled": false,
-    "low_volume_notification_enabled": true
+  "admin_ids": [6422159617],
+  "channel_username": "@YOUR_CHANNEL",
+  "payment_card": "YOUR_CARD",
+  "payment_name": "CARD_OWNER",
+  "bot_name": "کافه هرمس",
+  "low_volume_gb": 1,
+  "hermes_check_enabled": true,
+  "welcome_enabled": true,
+  "join_required_enabled": true,
+  "low_volume_notification_enabled": true,
+  "buy_enabled": true,
+  "renew_enabled": true,
+  "subscriptions_enabled": true,
+  "status_enabled": true,
+  "referral_enabled": true,
+  "coupon_enabled": true,
+  "order_history_enabled": true,
+  "account_enabled": true,
+  "support_enabled": true,
+  "tutorial_enabled": true,
+  "free_test_enabled": false,
+  "festival_enabled": false
 }
