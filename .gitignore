@@ -2,8 +2,6 @@ __pycache__/
 *.pyc
 *.session
 *.session-journal
-
 data/*.db
-
 config.local.json
 .env
