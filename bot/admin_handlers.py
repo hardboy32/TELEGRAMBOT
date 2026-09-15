@@ -6,10 +6,7 @@ from pyrogram.types import (
     InlineKeyboardButton
 )
 
-from bot.helpers import (
-    admin,
-    format_price
-)
+from bot.helpers import admin, format_price
 
 from bot.database import (
     get_pending_orders,
@@ -28,8 +25,7 @@ from bot.database import (
     mark_reward_applied,
     get_referrer,
     record_successful_referral,
-    get_referral_count,
-    get_user
+    get_referral_count
 )
 
 
@@ -109,6 +105,19 @@ def admin_panel_keyboard():
     )
 
 
+def back_admin_keyboard():
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "⬅️ بازگشت",
+                    callback_data="admin_home"
+                )
+            ]
+        ]
+    )
+
+
 def service_admin_keyboard(services):
     rows = []
 
@@ -118,7 +127,8 @@ def service_admin_keyboard(services):
         rows.append(
             [
                 InlineKeyboardButton(
-                    f"{status} {service['name']} | {service['volume_gb']}GB",
+                    f"{status} {service['name']} | "
+                    f"{service['volume_gb']}GB",
                     callback_data=f"admin_service_{service['id']}"
                 )
             ]
@@ -175,7 +185,7 @@ def order_keyboard(order_id):
 
 
 def buttons_keyboard(config):
-    names = [
+    items = [
         ("buy_enabled", "🛒 خرید سرویس"),
         ("renew_enabled", "🔄 تمدید"),
         ("subscriptions_enabled", "📦 اشتراک‌های من"),
@@ -192,13 +202,14 @@ def buttons_keyboard(config):
 
     rows = []
 
-    for key, title in names:
-        state = "🟢" if config.get(key, False) else "🔴"
+    for key, title in items:
+        enabled = bool(config.get(key, False))
+        status = "🟢" if enabled else "🔴"
 
         rows.append(
             [
                 InlineKeyboardButton(
-                    f"{state} {title}",
+                    f"{status} {title}",
                     callback_data=f"admin_toggle_{key}"
                 )
             ]
@@ -218,15 +229,43 @@ def buttons_keyboard(config):
 
 def register(app, config):
 
+    # =========================================================
+    # /start برای ادمین
+    # =========================================================
+
+    @app.on_message(
+        filters.private & filters.command("start")
+    )
+    async def admin_start(client, message):
+
+        user_id = message.from_user.id
+
+        if not admin(user_id, config):
+            return
+
+        await message.reply_text(
+            "👋 سلام ادمین عزیز.\n\n"
+            "⚙️ پنل مدیریت برای شما فعال است.",
+            reply_markup=admin_reply_menu()
+        )
+
+        await message.reply_text(
+            "⚙️ پنل مدیریت",
+            reply_markup=admin_panel_keyboard()
+        )
+
+    # =========================================================
+    # /admin
+    # =========================================================
+
     @app.on_message(
         filters.private & filters.command("admin")
     )
     async def admin_command(client, message):
 
-        if not admin(
-            message.from_user.id,
-            config
-        ):
+        user_id = message.from_user.id
+
+        if not admin(user_id, config):
             return
 
         await message.reply_text(
@@ -239,22 +278,31 @@ def register(app, config):
             reply_markup=admin_panel_keyboard()
         )
 
+    # =========================================================
+    # پیام‌های متنی ادمین
+    # =========================================================
+
     @app.on_message(
-        filters.private & filters.text
+        filters.private
+        & filters.text
+        & ~filters.command(["start", "admin"])
     )
     async def admin_text(client, message):
 
         user_id = message.from_user.id
 
-        if not admin(
-            user_id,
-            config
-        ):
+        if not admin(user_id, config):
             return
 
         text = message.text.strip()
 
+        # دکمه ثابت پنل مدیریت
         if text == "⚙️ پنل مدیریت":
+
+            admin_states.pop(
+                user_id,
+                None
+            )
 
             await message.reply_text(
                 "⚙️ پنل مدیریت",
@@ -265,67 +313,111 @@ def register(app, config):
 
         state = admin_states.get(user_id)
 
-        if state:
+        if not state:
+            return
 
-            step = state.get("step")
+        step = state.get("step")
 
-            if step == "service_name":
+        # =====================================================
+        # ساخت سرویس - نام
+        # =====================================================
 
-                state["name"] = text
-                state["step"] = "service_volume"
+        if step == "service_name":
+
+            state["name"] = text
+            state["step"] = "service_volume"
+
+            await message.reply_text(
+                "💾 حجم سرویس را به GB وارد کنید:"
+            )
+
+            return
+
+        # =====================================================
+        # ساخت سرویس - حجم
+        # =====================================================
+
+        if step == "service_volume":
+
+            try:
+                volume = int(text)
+
+                if volume <= 0:
+                    raise ValueError
+
+            except ValueError:
 
                 await message.reply_text(
-                    "💾 حجم سرویس را به GB وارد کنید:"
+                    "❌ حجم باید یک عدد مثبت باشد."
                 )
 
                 return
 
-            if step == "service_volume":
+            state["volume"] = volume
+            state["step"] = "service_price"
 
-                try:
-                    volume = int(text)
+            await message.reply_text(
+                "💰 قیمت سرویس را به تومان وارد کنید:"
+            )
 
-                    if volume <= 0:
-                        raise ValueError
+            return
 
-                except ValueError:
+        # =====================================================
+        # ساخت سرویس - قیمت
+        # =====================================================
 
-                    await message.reply_text(
-                        "❌ حجم باید یک عدد مثبت باشد."
-                    )
+        if step == "service_price":
 
-                    return
+            try:
+                price = int(text)
 
-                state["volume"] = volume
-                state["step"] = "service_price"
+                if price < 0:
+                    raise ValueError
+
+            except ValueError:
 
                 await message.reply_text(
-                    "💰 قیمت سرویس را به تومان وارد کنید:"
+                    "❌ قیمت باید یک عدد صحیح مثبت باشد."
                 )
 
                 return
 
-            if step == "service_price":
+            name = state["name"]
+            volume = state["volume"]
 
-                try:
-                    price = int(text)
+            service_id = add_service(
+                name,
+                volume,
+                price
+            )
 
-                    if price < 0:
-                        raise ValueError
+            admin_states.pop(
+                user_id,
+                None
+            )
 
-                except ValueError:
+            await message.reply_text(
+                "✅ سرویس با موفقیت اضافه شد.\n\n"
+                f"🆔 شناسه: {service_id}\n"
+                f"📦 نام: {name}\n"
+                f"💾 حجم: {volume}GB\n"
+                f"💰 قیمت: {format_price(price)} تومان",
+                reply_markup=admin_reply_menu()
+            )
 
-                    await message.reply_text(
-                        "❌ قیمت نامعتبر است."
-                    )
+            return
 
-                    return
+        # =====================================================
+        # ثبت کانفیگ
+        # =====================================================
 
-                service_id = add_service(
-                    state["name"],
-                    state["volume"],
-                    price
-                )
+        if step == "config":
+
+            order_id = state["order_id"]
+
+            order = get_order(order_id)
+
+            if not order:
 
                 admin_states.pop(
                     user_id,
@@ -333,240 +425,263 @@ def register(app, config):
                 )
 
                 await message.reply_text(
-                    f"✅ سرویس اضافه شد.\n\n"
-                    f"🆔 شناسه: {service_id}\n"
-                    f"📦 نام: {state['name']}\n"
-                    f"💾 حجم: {state['volume']}GB\n"
-                    f"💰 قیمت: {format_price(price)} تومان"
+                    "❌ سفارش پیدا نشد."
                 )
 
                 return
 
-            if step == "config":
+            config_text = text
 
-                order_id = state["order_id"]
+            save_subscription(
+                user_id=order["user_id"],
+                order_id=order["id"],
+                service_name=order["service_name"],
+                username=order["username"],
+                subscription_url=None,
+                config_text=config_text
+            )
 
-                order = get_order(order_id)
+            approve_order(order_id)
 
-                if not order:
+            admin_states.pop(
+                user_id,
+                None
+            )
 
-                    admin_states.pop(
-                        user_id,
-                        None
-                    )
+            # ارسال کانفیگ برای مشتری
+            try:
 
-                    await message.reply_text(
-                        "❌ سفارش پیدا نشد."
-                    )
-
-                    return
-
-                config_text = text
-
-                save_subscription(
-                    user_id=order["user_id"],
-                    order_id=order["id"],
-                    service_name=order["service_name"],
-                    username=order["username"],
-                    subscription_url=None,
-                    config_text=config_text
+                await client.send_message(
+                    order["user_id"],
+                    "🎉 سفارش شما تأیید شد!\n\n"
+                    f"🧾 سفارش: #{order_id}\n"
+                    f"📦 سرویس: {order['service_name']}\n"
+                    f"👤 نام کاربری: @{order['username']}\n\n"
+                    "⚙️ کانفیگ شما:\n\n"
+                    f"{config_text}\n\n"
+                    "✅ اشتراک شما فعال شد."
                 )
 
-                approve_order(order_id)
+            except Exception as e:
 
-                admin_states.pop(
-                    user_id,
-                    None
+                print(
+                    f"Config send error: {e}"
                 )
+
+            # ثبت دعوت موفق
+            referrer = get_referrer(
+                order["user_id"]
+            )
+
+            if referrer:
+
+                recorded = record_successful_referral(
+                    referrer,
+                    order["user_id"],
+                    order["id"]
+                )
+
+                if recorded:
+
+                    count = get_referral_count(
+                        referrer
+                    )
+
+                    if count > 0 and count % 5 == 0:
+
+                        from bot.database import create_referral_reward
+
+                        create_referral_reward(
+                            referrer
+                        )
+
+                        try:
+
+                            await client.send_message(
+                                referrer,
+                                "🎉 تبریک!\n\n"
+                                "۵ دعوت موفق برای شما ثبت شد.\n"
+                                "🎁 پاداش ۱۰GB برای شما ایجاد شد.\n\n"
+                                "این حجم توسط مدیریت به صورت دستی اعمال می‌شود."
+                            )
+
+                        except Exception:
+                            pass
+
+            await message.reply_text(
+                f"✅ کانفیگ سفارش #{order_id} ثبت شد.\n"
+                "و برای مشتری ارسال گردید.",
+                reply_markup=admin_reply_menu()
+            )
+
+            return
+
+        # =====================================================
+        # ساخت کد تخفیف
+        # =====================================================
+
+        if step == "coupon":
+
+            parts = text.split()
+
+            if len(parts) < 2:
+
+                await message.reply_text(
+                    "❌ فرمت صحیح:\n\n"
+                    "CODE PERCENT MAX_USES\n\n"
+                    "مثال:\n"
+                    "HERMES20 20 100"
+                )
+
+                return
+
+            code = parts[0].upper()
+
+            try:
+
+                percent = int(parts[1])
+
+                max_uses = (
+                    int(parts[2])
+                    if len(parts) >= 3
+                    else 0
+                )
+
+                if percent < 1 or percent > 100:
+                    raise ValueError
+
+                if max_uses < 0:
+                    raise ValueError
+
+            except ValueError:
+
+                await message.reply_text(
+                    "❌ اطلاعات کد تخفیف نامعتبر است."
+                )
+
+                return
+
+            result = create_coupon(
+                code,
+                percent,
+                max_uses
+            )
+
+            admin_states.pop(
+                user_id,
+                None
+            )
+
+            if result:
+
+                max_text = (
+                    str(max_uses)
+                    if max_uses > 0
+                    else "نامحدود"
+                )
+
+                await message.reply_text(
+                    "✅ کد تخفیف ساخته شد.\n\n"
+                    f"🎟️ کد: {code}\n"
+                    f"📉 تخفیف: {percent}%\n"
+                    f"🔢 تعداد استفاده: {max_text}",
+                    reply_markup=admin_reply_menu()
+                )
+
+            else:
+
+                await message.reply_text(
+                    "❌ این کد تخفیف قبلاً وجود دارد.",
+                    reply_markup=admin_reply_menu()
+                )
+
+            return
+
+        # =====================================================
+        # کارت پرداخت
+        # =====================================================
+
+        if step == "payment_card":
+
+            config["payment_card"] = text
+
+            admin_states[user_id] = {
+                "step": "payment_name"
+            }
+
+            await message.reply_text(
+                "👤 نام صاحب کارت را وارد کنید:"
+            )
+
+            return
+
+        # =====================================================
+        # نام صاحب کارت
+        # =====================================================
+
+        if step == "payment_name":
+
+            config["payment_name"] = text
+
+            admin_states.pop(
+                user_id,
+                None
+            )
+
+            await message.reply_text(
+                "✅ اطلاعات پرداخت برای اجرای فعلی تغییر کرد.",
+                reply_markup=admin_reply_menu()
+            )
+
+            return
+
+        # =====================================================
+        # پیام همگانی
+        # =====================================================
+
+        if step == "broadcast":
+
+            admin_states.pop(
+                user_id,
+                None
+            )
+
+            user_ids = get_all_user_ids()
+
+            success = 0
+            failed = 0
+
+            await message.reply_text(
+                f"📢 ارسال پیام به {len(user_ids)} کاربر شروع شد..."
+            )
+
+            for target_id in user_ids:
 
                 try:
 
                     await client.send_message(
-                        order["user_id"],
-                        "🎉 سفارش شما تأیید شد!\n\n"
-                        f"📦 سرویس: {order['service_name']}\n"
-                        f"👤 نام کاربری: @{order['username']}\n\n"
-                        "⚙️ کانفیگ شما:\n\n"
-                        f"{config_text}\n\n"
-                        "✅ اشتراک شما فعال شد."
+                        target_id,
+                        text
                     )
 
-                except Exception as e:
+                    success += 1
 
-                    print(
-                        f"User config send error: {e}"
-                    )
+                except Exception:
 
-                referrer = get_referrer(
-                    order["user_id"]
-                )
+                    failed += 1
 
-                if referrer:
+            await message.reply_text(
+                "📢 پیام همگانی تمام شد.\n\n"
+                f"✅ موفق: {success}\n"
+                f"❌ ناموفق: {failed}",
+                reply_markup=admin_reply_menu()
+            )
 
-                    recorded = record_successful_referral(
-                        referrer,
-                        order["user_id"],
-                        order["id"]
-                    )
+            return
 
-                    if recorded:
-
-                        count = get_referral_count(
-                            referrer
-                        )
-
-                        if count > 0 and count % 5 == 0:
-
-                            from bot.database import create_referral_reward
-
-                            reward_id = create_referral_reward(
-                                referrer
-                            )
-
-                            try:
-
-                                await client.send_message(
-                                    referrer,
-                                    "🎉 تبریک!\n\n"
-                                    "شما ۵ دعوت موفق داشتید.\n"
-                                    "🎁 یک پاداش ۱۰GB برای شما ثبت شد.\n\n"
-                                    "پاداش توسط مدیریت اعمال می‌شود."
-                                )
-
-                            except Exception:
-                                pass
-
-                await message.reply_text(
-                    f"✅ کانفیگ سفارش #{order_id} ثبت و سفارش تأیید شد."
-                )
-
-                return
-
-            if step == "coupon":
-
-                parts = text.split()
-
-                if len(parts) < 2:
-
-                    await message.reply_text(
-                        "فرمت صحیح:\n"
-                        "CODE PERCENT [MAX_USES]"
-                    )
-
-                    return
-
-                code = parts[0].upper()
-
-                try:
-                    percent = int(parts[1])
-                    max_uses = int(parts[2]) if len(parts) > 2 else 0
-
-                    if not 1 <= percent <= 100:
-                        raise ValueError
-
-                    if max_uses < 0:
-                        raise ValueError
-
-                except ValueError:
-
-                    await message.reply_text(
-                        "❌ اطلاعات کد تخفیف نامعتبر است."
-                    )
-
-                    return
-
-                result = create_coupon(
-                    code,
-                    percent,
-                    max_uses
-                )
-
-                admin_states.pop(
-                    user_id,
-                    None
-                )
-
-                if result:
-
-                    await message.reply_text(
-                        "✅ کد تخفیف ساخته شد.\n\n"
-                        f"🎟️ کد: {code}\n"
-                        f"📉 تخفیف: {percent}%\n"
-                        f"🔢 حداکثر استفاده: "
-                        f"{max_uses if max_uses else 'نامحدود'}"
-                    )
-
-                else:
-
-                    await message.reply_text(
-                        "❌ این کد قبلاً وجود دارد."
-                    )
-
-                return
-
-            if step == "payment_card":
-
-                config["payment_card"] = text
-
-                admin_states[user_id] = {
-                    "step": "payment_name"
-                }
-
-                await message.reply_text(
-                    "👤 نام صاحب کارت را وارد کنید:"
-                )
-
-                return
-
-            if step == "payment_name":
-
-                config["payment_name"] = text
-
-                admin_states.pop(
-                    user_id,
-                    None
-                )
-
-                await message.reply_text(
-                    "✅ اطلاعات پرداخت در اجرای فعلی ذخیره شد."
-                )
-
-                return
-
-            if step == "broadcast":
-
-                admin_states.pop(
-                    user_id,
-                    None
-                )
-
-                user_ids = get_all_user_ids()
-
-                success = 0
-                failed = 0
-
-                for target_id in user_ids:
-
-                    try:
-
-                        await client.send_message(
-                            target_id,
-                            text
-                        )
-
-                        success += 1
-
-                    except Exception:
-
-                        failed += 1
-
-                await message.reply_text(
-                    "📢 پیام همگانی تمام شد.\n\n"
-                    f"✅ ارسال موفق: {success}\n"
-                    f"❌ ناموفق: {failed}"
-                )
-
-                return
+    # =========================================================
+    # پنل اصلی
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex("^admin_home$")
@@ -583,12 +698,21 @@ def register(app, config):
             )
             return
 
+        admin_states.pop(
+            query.from_user.id,
+            None
+        )
+
         await query.message.edit_text(
             "⚙️ پنل مدیریت",
             reply_markup=admin_panel_keyboard()
         )
 
         await query.answer()
+
+    # =========================================================
+    # سفارش‌های در انتظار
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex("^admin_pending$")
@@ -607,16 +731,7 @@ def register(app, config):
 
             await query.message.edit_text(
                 "🧾 هیچ سفارش در انتظاری وجود ندارد.",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "⬅️ بازگشت",
-                                callback_data="admin_home"
-                            )
-                        ]
-                    ]
-                )
+                reply_markup=back_admin_keyboard()
             )
 
             await query.answer()
@@ -653,6 +768,10 @@ def register(app, config):
 
         await query.answer()
 
+    # =========================================================
+    # جزئیات سفارش
+    # =========================================================
+
     @app.on_callback_query(
         filters.regex(r"^admin_order_\d+$")
     )
@@ -682,7 +801,7 @@ def register(app, config):
         text = (
             "🧾 جزئیات سفارش\n\n"
             f"🆔 شماره: #{order['id']}\n"
-            f"👤 کاربر: {order['user_id']}\n"
+            f"👤 شناسه کاربر: {order['user_id']}\n"
             f"📦 سرویس: {order['service_name']}\n"
             f"👤 نام کاربری: @{order['username']}\n"
             f"💰 قیمت اصلی: "
@@ -709,10 +828,17 @@ def register(app, config):
                     caption=f"🧾 رسید سفارش #{order_id}"
                 )
 
-            except Exception:
-                pass
+            except Exception as e:
+
+                print(
+                    f"Receipt send error: {e}"
+                )
 
         await query.answer()
+
+    # =========================================================
+    # تأیید پرداخت
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex(r"^admin_approve_\d+$")
@@ -732,15 +858,24 @@ def register(app, config):
         order = get_order(order_id)
 
         if not order:
+
+            await query.answer(
+                "❌ سفارش پیدا نشد.",
+                show_alert=True
+            )
+
+            return
+
+        if order["status"] != "pending":
+
+            await query.answer(
+                "⚠️ این سفارش قبلاً بررسی شده.",
+                show_alert=True
+            )
+
             return
 
         approve_order(order_id)
-
-        await query.message.reply_text(
-            f"✅ پرداخت سفارش #{order_id} تأیید شد.\n\n"
-            "حالا روی «⚙️ ثبت کانفیگ» بزنید و "
-            "کانفیگ/لینک اشتراک را وارد کنید."
-        )
 
         try:
 
@@ -748,15 +883,27 @@ def register(app, config):
                 order["user_id"],
                 "✅ پرداخت شما تأیید شد.\n\n"
                 f"🧾 سفارش: #{order_id}\n\n"
-                "⏳ در حال آماده‌سازی کانفیگ شما..."
+                "⏳ حالا ادمین باید کانفیگ شما را ثبت کند."
             )
 
-        except Exception:
-            pass
+        except Exception as e:
+
+            print(
+                f"Approve notification error: {e}"
+            )
+
+        await query.message.reply_text(
+            f"✅ پرداخت سفارش #{order_id} تأیید شد.\n\n"
+            "حالا روی «⚙️ ثبت کانفیگ» بزنید."
+        )
 
         await query.answer(
             "پرداخت تأیید شد."
         )
+
+    # =========================================================
+    # رد پرداخت
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex(r"^admin_reject_\d+$")
@@ -776,6 +923,21 @@ def register(app, config):
         order = get_order(order_id)
 
         if not order:
+
+            await query.answer(
+                "❌ سفارش پیدا نشد.",
+                show_alert=True
+            )
+
+            return
+
+        if order["status"] != "pending":
+
+            await query.answer(
+                "⚠️ این سفارش قبلاً بررسی شده.",
+                show_alert=True
+            )
+
             return
 
         reject_order(order_id)
@@ -786,11 +948,14 @@ def register(app, config):
                 order["user_id"],
                 "❌ رسید پرداخت شما رد شد.\n\n"
                 f"🧾 سفارش: #{order_id}\n\n"
-                "در صورت اشتباه، دوباره با پشتیبانی تماس بگیرید."
+                "در صورت نیاز دوباره سفارش ثبت کنید."
             )
 
-        except Exception:
-            pass
+        except Exception as e:
+
+            print(
+                f"Reject notification error: {e}"
+            )
 
         await query.message.reply_text(
             f"❌ سفارش #{order_id} رد شد."
@@ -799,6 +964,10 @@ def register(app, config):
         await query.answer(
             "سفارش رد شد."
         )
+
+    # =========================================================
+    # ثبت کانفیگ
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex(r"^admin_config_\d+$")
@@ -818,10 +987,12 @@ def register(app, config):
         order = get_order(order_id)
 
         if not order:
+
             await query.answer(
                 "❌ سفارش پیدا نشد.",
                 show_alert=True
             )
+
             return
 
         admin_states[
@@ -837,6 +1008,10 @@ def register(app, config):
         )
 
         await query.answer()
+
+    # =========================================================
+    # مدیریت سرویس‌ها
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex("^admin_services$")
@@ -860,6 +1035,10 @@ def register(app, config):
 
         await query.answer()
 
+    # =========================================================
+    # فعال/غیرفعال کردن سرویس
+    # =========================================================
+
     @app.on_callback_query(
         filters.regex(r"^admin_service_\d+$")
     )
@@ -879,12 +1058,6 @@ def register(app, config):
             service_id
         )
 
-        await query.answer(
-            "🟢 سرویس فعال شد."
-            if new_state
-            else "🔴 سرویس غیرفعال شد."
-        )
-
         services = get_services(False)
 
         await query.message.edit_text(
@@ -893,6 +1066,16 @@ def register(app, config):
                 services
             )
         )
+
+        await query.answer(
+            "🟢 سرویس فعال شد."
+            if new_state
+            else "🔴 سرویس غیرفعال شد."
+        )
+
+    # =========================================================
+    # افزودن سرویس
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex("^admin_add_service$")
@@ -918,6 +1101,10 @@ def register(app, config):
 
         await query.answer()
 
+    # =========================================================
+    # کاربران
+    # =========================================================
+
     @app.on_callback_query(
         filters.regex("^admin_users$")
     )
@@ -934,19 +1121,14 @@ def register(app, config):
         await query.message.edit_text(
             "👥 کاربران\n\n"
             f"تعداد کاربران ثبت‌شده: {count}",
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "⬅️ بازگشت",
-                            callback_data="admin_home"
-                        )
-                    ]
-                ]
-            )
+            reply_markup=back_admin_keyboard()
         )
 
         await query.answer()
+
+    # =========================================================
+    # آمار
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex("^admin_stats$")
@@ -974,19 +1156,14 @@ def register(app, config):
             f"🧾 کل سفارش‌ها: {orders}\n"
             f"⏳ سفارش‌های در انتظار: {pending}\n"
             f"📦 سرویس‌های فعال: {services}",
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "⬅️ بازگشت",
-                            callback_data="admin_home"
-                        )
-                    ]
-                ]
-            )
+            reply_markup=back_admin_keyboard()
         )
 
         await query.answer()
+
+    # =========================================================
+    # کد تخفیف
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex("^admin_coupon$")
@@ -1011,10 +1188,14 @@ def register(app, config):
             "CODE PERCENT MAX_USES\n\n"
             "مثال:\n"
             "HERMES20 20 100\n\n"
-            "اگر تعداد استفاده نامحدود است، 0 بزنید."
+            "برای استفاده نامحدود، عدد 0 را بزنید."
         )
 
         await query.answer()
+
+    # =========================================================
+    # پاداش دعوت
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex("^admin_rewards$")
@@ -1033,16 +1214,7 @@ def register(app, config):
 
             await query.message.edit_text(
                 "🎁 پاداش در انتظاری وجود ندارد.",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "⬅️ بازگشت",
-                                callback_data="admin_home"
-                            )
-                        ]
-                    ]
-                )
+                reply_markup=back_admin_keyboard()
             )
 
             await query.answer()
@@ -1078,6 +1250,10 @@ def register(app, config):
 
         await query.answer()
 
+    # =========================================================
+    # اعمال پاداش
+    # =========================================================
+
     @app.on_callback_query(
         filters.regex(r"^admin_reward_\d+$")
     )
@@ -1098,14 +1274,18 @@ def register(app, config):
         )
 
         await query.answer(
-            "پاداش به عنوان اعمال‌شده ثبت شد."
+            "پاداش ثبت شد."
         )
 
         await query.message.reply_text(
-            "✅ پاداش ثبت شد.\n\n"
-            "حجم ۱۰GB باید در پنل هرمس به صورت دستی "
-            "برای کاربر اعمال شود."
+            "✅ پاداش به عنوان اعمال‌شده ثبت شد.\n\n"
+            "⚠️ حجم ۱۰GB باید در پنل هرمس "
+            "به صورت دستی برای کاربر اعمال شود."
         )
+
+    # =========================================================
+    # پیام همگانی
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex("^admin_broadcast$")
@@ -1130,6 +1310,10 @@ def register(app, config):
 
         await query.answer()
 
+    # =========================================================
+    # تنظیمات دکمه‌ها
+    # =========================================================
+
     @app.on_callback_query(
         filters.regex("^admin_buttons$")
     )
@@ -1143,12 +1327,14 @@ def register(app, config):
 
         await query.message.edit_text(
             "⚙️ تنظیمات دکمه‌های کاربر",
-            reply_markup=buttons_keyboard(
-                config
-            )
+            reply_markup=buttons_keyboard(config)
         )
 
         await query.answer()
+
+    # =========================================================
+    # روشن/خاموش کردن دکمه
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex(r"^admin_toggle_.+$")
@@ -1168,10 +1354,12 @@ def register(app, config):
         )
 
         if key not in config:
+
             await query.answer(
                 "❌ تنظیمات پیدا نشد.",
                 show_alert=True
             )
+
             return
 
         config[key] = not bool(
@@ -1180,14 +1368,16 @@ def register(app, config):
 
         await query.message.edit_text(
             "⚙️ تنظیمات دکمه‌های کاربر",
-            reply_markup=buttons_keyboard(
-                config
-            )
+            reply_markup=buttons_keyboard(config)
         )
 
         await query.answer(
-            "تنظیمات تغییر کرد."
+            "✅ تنظیمات تغییر کرد."
         )
+
+    # =========================================================
+    # تنظیمات پرداخت
+    # =========================================================
 
     @app.on_callback_query(
         filters.regex("^admin_payment$")
