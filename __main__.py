@@ -9,13 +9,19 @@ from bot.admin_handlers import register as register_admin
 
 
 def load_config():
-    with open("config.json", "r", encoding="utf-8") as f:
+    with open(
+        "config.json",
+        "r",
+        encoding="utf-8"
+    ) as f:
         return json.load(f)
 
 
 async def main():
+
     config = load_config()
 
+    # ساخت دیتابیس در صورت نیاز
     init_db()
 
     app = Client(
@@ -25,14 +31,26 @@ async def main():
         bot_token=config["bot_token"]
     )
 
-    register_users(app, config)
-    register_admin(app, config)
+    # ثبت Handler های کاربران
+    register_users(
+        app,
+        config
+    )
+
+    # ثبت Handler های ادمین
+    register_admin(
+        app,
+        config
+    )
 
     print("Cafe Hermes Bot started.")
 
     await app.start()
 
-    await asyncio.Event().wait()
+    try:
+        await asyncio.Event().wait()
+    finally:
+        await app.stop()
 
 
 if __name__ == "__main__":
