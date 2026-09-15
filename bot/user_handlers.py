@@ -1431,4 +1431,86 @@ def register(app, config):
             return
 
     # =====================================================
-    # دریافت
+    # دریافت عکس رسید
+    # =====================================================
+
+    @app.on_message(
+        filters.private
+        & filters.photo
+    )
+    async def receipt_handler(client, message):
+
+        user_id = message.from_user.id
+
+        state = app.user_state.get(user_id)
+
+        if not state:
+            return
+
+        if state.get("action") != "receipt":
+            return
+
+        order_id = state["order_id"]
+
+        order = get_order(order_id)
+
+        if not order or order["user_id"] != user_id:
+
+            await message.reply_text(
+                "❌ سفارش پیدا نشد."
+            )
+
+            app.user_state.pop(user_id, None)
+            return
+
+        if order["status"] != "pending":
+
+            await message.reply_text(
+                "❌ این سفارش قبلاً بررسی شده است."
+            )
+
+            app.user_state.pop(user_id, None)
+            return
+
+        photo_id = message.photo.file_id
+
+        set_receipt(
+            order_id,
+            photo_id
+        )
+
+        app.user_state.pop(user_id, None)
+
+        await message.reply_text(
+            "✅ رسید شما دریافت شد.\n\n"
+            f"🧾 شماره سفارش: #{order_id}\n\n"
+            "⏳ رسید توسط مدیریت بررسی می‌شود."
+        )
+
+        # ارسال رسید برای ادمین‌ها
+        for admin_id in config.get("admin_ids", []):
+
+            try:
+
+                await client.send_photo(
+                    admin_id,
+                    photo_id,
+                    caption=(
+                        "🧾 رسید پرداخت جدید\n\n"
+                        f"🆔 سفارش: #{order_id}\n"
+                        f"👤 کاربر: {user_id}\n"
+                        f"📦 سرویس: {order['service_name']}\n"
+                        f"💵 مبلغ: {order['final_price']:,} تومان"
+                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton(
+                                "🧾 مشاهده سفارش",
+                                callback_data=f"admin_order_{order_id}"
+                            )
+                        ]
+                    ])
+                )
+
+            except Exception:
+                pass
