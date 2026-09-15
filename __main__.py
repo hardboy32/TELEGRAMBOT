@@ -72,14 +72,13 @@ async def main():
         bot_token=config["bot_token"]
     )
 
-    # مهم:
-    # اول handler های ادمین ثبت می‌شوند.
+    # اول هندلرهای ادمین
     register_admin(
         app,
         config
     )
 
-    # بعد handler های کاربر
+    # بعد هندلرهای کاربران
     register_users(
         app,
         config
