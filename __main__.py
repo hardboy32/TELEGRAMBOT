@@ -72,12 +72,15 @@ async def main():
         bot_token=config["bot_token"]
     )
 
-    register_users(
+    # مهم:
+    # اول handler های ادمین ثبت می‌شوند.
+    register_admin(
         app,
         config
     )
 
-    register_admin(
+    # بعد handler های کاربر
+    register_users(
         app,
         config
     )
