@@ -41,6 +41,12 @@ from bot.database import (
     get_user,
     get_user_orders,
     get_user_subscriptions,
+    get_subscription,
+    delete_order,
+    update_order_status,
+    delete_subscription,
+    update_subscription_fields,
+    update_subscription_status,
     reset_user_info,
     get_tutorials,
     get_tutorial,
@@ -1196,6 +1202,47 @@ def register(app, config):
         # افزودن اشتراک دستی - نام سرویس
         # =====================================================
 
+        if step == "edit_sub_config":
+
+            sub_id = state.get("sub_id")
+            update_subscription_fields(sub_id, config_text=text)
+            admin_states.pop(user_id, None)
+            sub = get_subscription(sub_id)
+            await message.reply_text(
+                f"✅ کانفیگ اشتراک #{sub_id} به‌روز شد.",
+                reply_markup=admin_reply_menu()
+            )
+            raise StopPropagation
+
+        if step == "edit_sub_username":
+
+            from bot.helpers import normalize_username, valid_username
+            username = normalize_username(text)
+            if not valid_username(username):
+                await message.reply_text("❌ نام کاربری نامعتبر است. دوباره بفرستید:")
+                raise StopPropagation
+
+            sub_id = state.get("sub_id")
+            update_subscription_fields(sub_id, username=username)
+            admin_states.pop(user_id, None)
+            await message.reply_text(
+                f"✅ نام کاربری اشتراک #{sub_id} به <code>{username}</code> تغییر کرد.",
+                reply_markup=admin_reply_menu(),
+                parse_mode=enums.ParseMode.HTML
+            )
+            raise StopPropagation
+
+        if step == "edit_sub_service":
+
+            sub_id = state.get("sub_id")
+            update_subscription_fields(sub_id, service_name=text)
+            admin_states.pop(user_id, None)
+            await message.reply_text(
+                f"✅ نام سرویس اشتراک #{sub_id} به {text} تغییر کرد.",
+                reply_markup=admin_reply_menu()
+            )
+            raise StopPropagation
+
         if step == "manual_sub_service":
 
             state["service_name"] = text
@@ -2270,21 +2317,200 @@ def register(app, config):
             await query.answer()
             return
 
-        lines = [f"🧾 سفارش‌های کاربر <code>{target_id}</code>\n"]
+        lines = [
+            f"🧾 سفارش‌های کاربر <code>{target_id}</code>\n",
+            "روی هر سفارش بزنید تا مدیریت شود.\n"
+        ]
+        rows = []
 
-        for o in orders[:20]:
+        for o in orders[:25]:
             lines.append(
                 f"#{o['id']} | {o['service_name']} | "
                 f"<code>{o['username']}</code> | "
                 f"{format_price(o['final_price'])} | {o['status']}"
             )
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        f"#{o['id']} | {o['status']}",
+                        callback_data=f"admin_o_{o['id']}"
+                    )
+                ]
+            )
+
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "⬅️ بازگشت",
+                    callback_data=f"admin_user_{target_id}"
+                )
+            ]
+        )
 
         await query.message.edit_text(
             "\n".join(lines),
-            reply_markup=user_detail_keyboard(target_id),
+            reply_markup=InlineKeyboardMarkup(rows),
             parse_mode=enums.ParseMode.HTML
         )
         await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_o_\d+$")
+    )
+    async def admin_order_manage(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        order_id = int(query.data.split("_")[-1])
+        order = get_order(order_id)
+
+        if not order:
+            await query.answer("❌ سفارش پیدا نشد.", show_alert=True)
+            return
+
+        uid = order["user_id"]
+        text = (
+            f"🧾 مدیریت سفارش #{order_id}\n\n"
+            f"👤 کاربر: <code>{uid}</code>\n"
+            f"📦 سرویس: {order['service_name']}\n"
+            f"👤 نام کاربری: <code>{order['username']}</code>\n"
+            f"💰 مبلغ: {format_price(order['final_price'])} تومان\n"
+            f"🎟️ تخفیف: {order['discount_percent']}%\n"
+            f"🔵 وضعیت: {order['status']}\n"
+            f"📅 تاریخ: {order['created_at']}"
+        )
+
+        rows = [
+            [
+                InlineKeyboardButton(
+                    "✅ approved",
+                    callback_data=f"admin_ost_approved_{order_id}"
+                ),
+                InlineKeyboardButton(
+                    "⏳ pending",
+                    callback_data=f"admin_ost_pending_{order_id}"
+                ),
+                InlineKeyboardButton(
+                    "❌ rejected",
+                    callback_data=f"admin_ost_rejected_{order_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🗑 حذف سفارش",
+                    callback_data=f"admin_odel_{order_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⬅️ بازگشت به سفارش‌ها",
+                    callback_data=f"admin_uorders_{uid}"
+                )
+            ]
+        ]
+
+        await query.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(rows),
+            parse_mode=enums.ParseMode.HTML
+        )
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_ost_(approved|pending|rejected)_\d+$")
+    )
+    async def admin_order_set_status(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        parts = query.data.split("_")
+        # admin_ost_STATUS_ID
+        status = parts[2]
+        order_id = int(parts[3])
+        order = get_order(order_id)
+
+        if not order:
+            await query.answer("❌ سفارش پیدا نشد.", show_alert=True)
+            return
+
+        update_order_status(order_id, status)
+        order = get_order(order_id)
+        uid = order["user_id"]
+
+        await query.answer(f"وضعیت → {status}")
+        # refresh detail
+        query.data = f"admin_o_{order_id}"
+        await admin_order_manage(client, query)
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_odel_\d+$")
+    )
+    async def admin_order_delete(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        order_id = int(query.data.split("_")[-1])
+        order = get_order(order_id)
+
+        if not order:
+            await query.answer("❌ سفارش پیدا نشد.", show_alert=True)
+            return
+
+        uid = order["user_id"]
+
+        await query.message.edit_text(
+            f"🗑 حذف سفارش #{order_id}؟\n\nاین عمل قابل برگشت نیست.",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "✅ بله حذف کن",
+                            callback_data=f"admin_odelok_{order_id}"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "❌ انصراف",
+                            callback_data=f"admin_o_{order_id}"
+                        )
+                    ]
+                ]
+            )
+        )
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_odelok_\d+$")
+    )
+    async def admin_order_delete_ok(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        order_id = int(query.data.split("_")[-1])
+        order = get_order(order_id)
+        uid = order["user_id"] if order else 0
+
+        if order:
+            delete_order(order_id)
+
+        await query.answer("حذف شد.")
+        # back to orders list
+        if uid:
+            query.data = f"admin_uorders_{uid}"
+            await admin_user_orders(client, query)
+        else:
+            await query.message.edit_text(
+                "✅ سفارش حذف شد.",
+                reply_markup=back_admin_keyboard()
+            )
 
 
     @app.on_callback_query(
@@ -2307,25 +2533,262 @@ def register(app, config):
             await query.answer()
             return
 
-        lines = [f"📦 اشتراک‌های کاربر <code>{target_id}</code>\n"]
+        lines = [
+            f"📦 اشتراک‌های کاربر <code>{target_id}</code>\n",
+            "روی هر اشتراک بزنید تا مدیریت شود.\n"
+        ]
+        rows = []
 
-        for s in subs[:20]:
+        for s in subs[:25]:
             lines.append(
                 f"#{s['id']} | {s['service_name']} | "
                 f"<code>{s['username']}</code> | {s['status']}"
             )
-            if s.get("config_text"):
-                lines.append(f"⚙️ <code>{s['config_text'][:80]}</code>")
-            if s.get("subscription_url"):
-                lines.append(f"🔗 {s['subscription_url']}")
-            lines.append("")
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        f"#{s['id']} | {s['service_name'][:20]}",
+                        callback_data=f"admin_s_{s['id']}"
+                    )
+                ]
+            )
+
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "⬅️ بازگشت",
+                    callback_data=f"admin_user_{target_id}"
+                )
+            ]
+        )
 
         await query.message.edit_text(
             "\n".join(lines),
-            reply_markup=user_detail_keyboard(target_id),
+            reply_markup=InlineKeyboardMarkup(rows),
             parse_mode=enums.ParseMode.HTML
         )
         await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_s_\d+$")
+    )
+    async def admin_sub_manage(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        sub_id = int(query.data.split("_")[-1])
+        sub = get_subscription(sub_id)
+
+        if not sub:
+            await query.answer("❌ اشتراک پیدا نشد.", show_alert=True)
+            return
+
+        uid = sub["user_id"]
+        cfg = (sub.get("config_text") or "—")
+        if len(cfg) > 200:
+            cfg = cfg[:200] + "..."
+
+        text = (
+            f"📦 مدیریت اشتراک #{sub_id}\n\n"
+            f"👤 کاربر: <code>{uid}</code>\n"
+            f"📦 سرویس: {sub['service_name']}\n"
+            f"👤 نام کاربری: <code>{sub['username']}</code>\n"
+            f"🔵 وضعیت: {sub['status']}\n"
+            f"📅 ایجاد: {sub.get('created_at') or '—'}\n\n"
+            f"⚙️ کانفیگ:\n<code>{cfg}</code>\n"
+        )
+        if sub.get("subscription_url"):
+            text += f"\n🔗 لینک:\n{sub['subscription_url']}"
+
+        rows = [
+            [
+                InlineKeyboardButton(
+                    "🟢 active",
+                    callback_data=f"admin_sst_active_{sub_id}"
+                ),
+                InlineKeyboardButton(
+                    "🔴 inactive",
+                    callback_data=f"admin_sst_inactive_{sub_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✏️ ویرایش کانفیگ",
+                    callback_data=f"admin_seditcfg_{sub_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✏️ ویرایش نام کاربری",
+                    callback_data=f"admin_sedituser_{sub_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✏️ ویرایش نام سرویس",
+                    callback_data=f"admin_seditname_{sub_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🗑 حذف اشتراک",
+                    callback_data=f"admin_sdel_{sub_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⬅️ بازگشت به اشتراک‌ها",
+                    callback_data=f"admin_usubs_{uid}"
+                )
+            ]
+        ]
+
+        await query.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(rows),
+            parse_mode=enums.ParseMode.HTML
+        )
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_sst_(active|inactive)_\d+$")
+    )
+    async def admin_sub_set_status(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        parts = query.data.split("_")
+        status = parts[2]
+        sub_id = int(parts[3])
+
+        update_subscription_status(sub_id, status)
+        await query.answer(f"وضعیت → {status}")
+        query.data = f"admin_s_{sub_id}"
+        await admin_sub_manage(client, query)
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_seditcfg_\d+$")
+    )
+    async def admin_sub_edit_cfg(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        sub_id = int(query.data.split("_")[-1])
+        admin_states[query.from_user.id] = {
+            "step": "edit_sub_config",
+            "sub_id": sub_id
+        }
+        await query.message.reply_text(
+            f"⚙️ کانفیگ جدید برای اشتراک #{sub_id} را بفرستید:"
+        )
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_sedituser_\d+$")
+    )
+    async def admin_sub_edit_user(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        sub_id = int(query.data.split("_")[-1])
+        admin_states[query.from_user.id] = {
+            "step": "edit_sub_username",
+            "sub_id": sub_id
+        }
+        await query.message.reply_text(
+            f"👤 نام کاربری جدید برای اشتراک #{sub_id} را بفرستید (بدون @):"
+        )
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_seditname_\d+$")
+    )
+    async def admin_sub_edit_name(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        sub_id = int(query.data.split("_")[-1])
+        admin_states[query.from_user.id] = {
+            "step": "edit_sub_service",
+            "sub_id": sub_id
+        }
+        await query.message.reply_text(
+            f"📦 نام سرویس جدید برای اشتراک #{sub_id} را بفرستید:"
+        )
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_sdel_\d+$")
+    )
+    async def admin_sub_delete(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        sub_id = int(query.data.split("_")[-1])
+        sub = get_subscription(sub_id)
+
+        if not sub:
+            await query.answer("❌ اشتراک پیدا نشد.", show_alert=True)
+            return
+
+        await query.message.edit_text(
+            f"🗑 حذف اشتراک #{sub_id}؟\n\nاین عمل قابل برگشت نیست.",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "✅ بله حذف کن",
+                            callback_data=f"admin_sdelok_{sub_id}"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "❌ انصراف",
+                            callback_data=f"admin_s_{sub_id}"
+                        )
+                    ]
+                ]
+            )
+        )
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_sdelok_\d+$")
+    )
+    async def admin_sub_delete_ok(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        sub_id = int(query.data.split("_")[-1])
+        sub = get_subscription(sub_id)
+        uid = sub["user_id"] if sub else 0
+
+        if sub:
+            delete_subscription(sub_id)
+
+        await query.answer("حذف شد.")
+        if uid:
+            query.data = f"admin_usubs_{uid}"
+            await admin_user_subs(client, query)
+        else:
+            await query.message.edit_text(
+                "✅ اشتراک حذف شد.",
+                reply_markup=back_admin_keyboard()
+            )
 
 
     @app.on_callback_query(
