@@ -291,7 +291,8 @@ def restore_backup(zip_path, config):
 
 async def auto_backup_loop(app, config):
     """
-    هر N ساعت یک بکاپ می‌سازد و برای همه ادمین‌ها ارسال می‌کند.
+    هر N ساعت یک بکاپ می‌سازد و فقط برای یک یوزر مشخص می‌فرستد
+    (auto_backup_user_id در config.json).
     """
     import asyncio
 
@@ -301,18 +302,35 @@ async def auto_backup_loop(app, config):
         print("Auto backup is disabled.")
         return
 
-    try:
-        hours = float(config.get("auto_backup_hours", 24))
-    except (TypeError, ValueError):
-        hours = 24
+    target = config.get("auto_backup_user_id")
 
-    if hours < 1:
+    if not target:
+        print(
+            "Auto backup: auto_backup_user_id "
+            "در config تنظیم نشده است."
+        )
+        return
+
+    try:
+        target = int(target)
+    except (TypeError, ValueError):
+        print("Auto backup: auto_backup_user_id نامعتبر است.")
+        return
+
+    try:
+        hours = float(config.get("auto_backup_hours", 1))
+    except (TypeError, ValueError):
         hours = 1
+
+    if hours < 0.25:
+        hours = 0.25
 
     interval = int(hours * 3600)
 
     print(
-        f"Auto backup enabled. Interval: {hours} hour(s)."
+        f"Auto backup enabled. "
+        f"Target user: {target} | "
+        f"Interval: {hours} hour(s)."
     )
 
     while True:
@@ -329,24 +347,15 @@ async def auto_backup_loop(app, config):
                 "حتماً در Saved Messages ذخیره کنید."
             )
 
-            for admin_id in config.get("admin_ids", []):
+            await app.send_document(
+                target,
+                zip_path,
+                caption=caption
+            )
 
-                try:
-
-                    await app.send_document(
-                        int(admin_id),
-                        zip_path,
-                        caption=caption
-                    )
-
-                except Exception as e:
-
-                    print(
-                        f"Auto backup send failed "
-                        f"for {admin_id}: {e}"
-                    )
-
-            print("Auto backup sent successfully.")
+            print(
+                f"Auto backup sent to {target}."
+            )
 
         except Exception as e:
 
