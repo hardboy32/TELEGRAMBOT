@@ -17,7 +17,9 @@ from bot.database import (
     get_referral_reward_count,
     get_coupon,
     use_coupon,
-    reset_low_volume_warning
+    reset_low_volume_warning,
+    get_tutorials,
+    get_tutorial
 )
 
 from bot.helpers import (
@@ -37,7 +39,8 @@ from bot.keyboards import (
     payment_keyboard,
     subscriptions_keyboard,
     renew_keyboard,
-    back_home_keyboard
+    back_home_keyboard,
+    tutorials_keyboard
 )
 
 from bot.messages import (
@@ -351,14 +354,18 @@ def register(app, config):
 
         if text == "📚 آموزش":
 
+            tutorials = get_tutorials(True)
+
+            if not tutorials:
+                await message.reply_text(
+                    "📚 هنوز آموزشی ثبت نشده است."
+                )
+                return
+
             await message.reply_text(
-                "📚 آموزش استفاده\n\n"
-                "1️⃣ سرویس موردنظر را انتخاب کنید.\n"
-                "2️⃣ نام کاربری دلخواه وارد کنید.\n"
-                "3️⃣ سفارش را تأیید کنید.\n"
-                "4️⃣ مبلغ را پرداخت کنید.\n"
-                "5️⃣ عکس رسید را ارسال کنید.\n"
-                "6️⃣ بعد از تأیید ادمین، کانفیگ برای شما ارسال می‌شود."
+                "📚 آموزش اتصال و استفاده\n\n"
+                "پلتفرم موردنظر خود را انتخاب کنید:",
+                reply_markup=tutorials_keyboard(tutorials)
             )
 
             return
@@ -859,6 +866,66 @@ def register(app, config):
         )
 
         await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^tutorial_\d+$")
+    )
+    async def tutorial_selected(client, query):
+
+        tutorial_id = int(
+            query.data.split("_")[1]
+        )
+
+        item = get_tutorial(tutorial_id)
+
+        if not item or not item.get("active"):
+            await query.answer(
+                "❌ این آموزش فعال نیست.",
+                show_alert=True
+            )
+            return
+
+        body = (item.get("body_text") or "").strip()
+
+        if body:
+            await query.message.reply_text(
+                f"{item['title']}\n\n{body}"
+            )
+        else:
+            await query.message.reply_text(
+                f"{item['title']}"
+            )
+
+        if item.get("file_id"):
+            try:
+                await client.send_document(
+                    query.from_user.id,
+                    item["file_id"],
+                    caption="📎 فایل نصب / برنامه"
+                )
+            except Exception as e:
+                print(f"Tutorial file error: {e}")
+
+        if item.get("video_file_id"):
+            try:
+                await client.send_video(
+                    query.from_user.id,
+                    item["video_file_id"],
+                    caption="🎬 ویدیو آموزشی"
+                )
+            except Exception:
+                try:
+                    await client.send_document(
+                        query.from_user.id,
+                        item["video_file_id"],
+                        caption="🎬 ویدیو آموزشی"
+                    )
+                except Exception as e:
+                    print(f"Tutorial video error: {e}")
+
+        await query.answer()
+
 
     @app.on_callback_query(
         filters.regex("^user_home$")
