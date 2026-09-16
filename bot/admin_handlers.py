@@ -32,7 +32,14 @@ from bot.database import (
     mark_reward_applied,
     get_referrer,
     record_successful_referral,
-    get_referral_count
+    get_referral_count,
+    get_users_page,
+    get_tutorials,
+    get_tutorial,
+    update_tutorial_field,
+    add_tutorial,
+    toggle_tutorial,
+    delete_tutorial
 )
 
 
@@ -110,6 +117,12 @@ def admin_panel_keyboard():
             ],
             [
                 InlineKeyboardButton(
+                    "📚 مدیریت آموزش",
+                    callback_data="admin_tutorials"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     "💾 پشتیبان‌گیری",
                     callback_data="admin_backup"
                 )
@@ -141,6 +154,119 @@ def restore_confirm_keyboard():
             ]
         ]
     )
+
+
+def admin_tutorials_keyboard(tutorials):
+    rows = []
+
+    for item in tutorials:
+        status = "🟢" if item["active"] else "🔴"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"{status} {item['title']}",
+                    callback_data=f"admin_tut_{item['id']}"
+                )
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                "➕ افزودن دکمه آموزش",
+                callback_data="admin_tut_add"
+            )
+        ]
+    )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                "⬅️ بازگشت",
+                callback_data="admin_home"
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(rows)
+
+
+def admin_tutorial_item_keyboard(tutorial_id):
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✏️ ویرایش متن",
+                    callback_data=f"admin_tut_text_{tutorial_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📎 تنظیم فایل نصب",
+                    callback_data=f"admin_tut_file_{tutorial_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🎬 تنظیم ویدیو",
+                    callback_data=f"admin_tut_video_{tutorial_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔄 روشن/خاموش",
+                    callback_data=f"admin_tut_toggle_{tutorial_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🗑 حذف",
+                    callback_data=f"admin_tut_del_{tutorial_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⬅️ بازگشت",
+                    callback_data="admin_tutorials"
+                )
+            ]
+        ]
+    )
+
+
+def users_page_keyboard(offset, total, page_size=10):
+    rows = []
+
+    if offset > 0:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "⬅️ قبلی",
+                    callback_data=f"admin_users_page_{max(0, offset - page_size)}"
+                )
+            ]
+        )
+
+    if offset + page_size < total:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "بعدی ➡️",
+                    callback_data=f"admin_users_page_{offset + page_size}"
+                )
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                "⬅️ بازگشت",
+                callback_data="admin_home"
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(rows)
 
 
 def back_admin_keyboard():
@@ -1181,11 +1307,155 @@ def register(app, config):
             return
 
         count = get_users_count()
+        page_size = 10
+        users = get_users_page(0, page_size)
+
+        lines = [
+            "👥 کاربران\n",
+            f"تعداد کل: {count}\n"
+        ]
+
+        rows = []
+
+        for u in users:
+            uname = u.get("username") or "—"
+            name = u.get("first_name") or "—"
+            lines.append(
+                f"🆔 `{u['id']}` | @{uname} | {name}"
+            )
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        f"✉️ پیام به {u['id']}",
+                        callback_data=f"admin_msg_{u['id']}"
+                    )
+                ]
+            )
+
+        if count > page_size:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        "بعدی ➡️",
+                        callback_data=f"admin_users_page_{page_size}"
+                    )
+                ]
+            )
+
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "⬅️ بازگشت",
+                    callback_data="admin_home"
+                )
+            ]
+        )
 
         await query.message.edit_text(
-            "👥 کاربران\n\n"
-            f"تعداد کاربران ثبت‌شده: {count}",
-            reply_markup=back_admin_keyboard()
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(rows)
+        )
+
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_users_page_\d+$")
+    )
+    async def admin_users_page(client, query):
+
+        if not admin(
+            query.from_user.id,
+            config
+        ):
+            return
+
+        offset = int(query.data.split("_")[-1])
+        page_size = 10
+        count = get_users_count()
+        users = get_users_page(offset, page_size)
+
+        lines = [
+            "👥 کاربران\n",
+            f"تعداد کل: {count}\n",
+            f"صفحه از {offset + 1}\n"
+        ]
+
+        rows = []
+
+        for u in users:
+            uname = u.get("username") or "—"
+            name = u.get("first_name") or "—"
+            lines.append(
+                f"🆔 `{u['id']}` | @{uname} | {name}"
+            )
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        f"✉️ پیام به {u['id']}",
+                        callback_data=f"admin_msg_{u['id']}"
+                    )
+                ]
+            )
+
+        nav = []
+
+        if offset > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    "⬅️ قبلی",
+                    callback_data=f"admin_users_page_{max(0, offset - page_size)}"
+                )
+            )
+
+        if offset + page_size < count:
+            nav.append(
+                InlineKeyboardButton(
+                    "بعدی ➡️",
+                    callback_data=f"admin_users_page_{offset + page_size}"
+                )
+            )
+
+        if nav:
+            rows.append(nav)
+
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "⬅️ بازگشت",
+                    callback_data="admin_home"
+                )
+            ]
+        )
+
+        await query.message.edit_text(
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(rows)
+        )
+
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_msg_\d+$")
+    )
+    async def admin_msg_user(client, query):
+
+        if not admin(
+            query.from_user.id,
+            config
+        ):
+            return
+
+        target_id = int(query.data.split("_")[-1])
+
+        admin_states[query.from_user.id] = {
+            "step": "message_user",
+            "target_id": target_id
+        }
+
+        await query.message.reply_text(
+            f"✉️ پیام خود را برای کاربر `{target_id}` بنویسید:"
         )
 
         await query.answer()
@@ -1468,6 +1738,203 @@ def register(app, config):
 
         await query.answer()
 
+
+    # =========================================================
+    # مدیریت آموزش‌ها
+    # =========================================================
+
+    @app.on_callback_query(
+        filters.regex("^admin_tutorials$")
+    )
+    async def admin_tutorials(client, query):
+
+        if not admin(
+            query.from_user.id,
+            config
+        ):
+            return
+
+        tutorials = get_tutorials(False)
+
+        await query.message.edit_text(
+            "📚 مدیریت آموزش‌ها\n\n"
+            "روی هر مورد بزنید تا متن، فایل نصب یا ویدیو را تنظیم کنید.\n"
+            "با «➕ افزودن دکمه آموزش» می‌توانید دکمه جدید بسازید.",
+            reply_markup=admin_tutorials_keyboard(tutorials)
+        )
+
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_tut_\d+$")
+    )
+    async def admin_tut_item(client, query):
+
+        if not admin(
+            query.from_user.id,
+            config
+        ):
+            return
+
+        tutorial_id = int(query.data.split("_")[-1])
+        item = get_tutorial(tutorial_id)
+
+        if not item:
+            await query.answer("❌ پیدا نشد.", show_alert=True)
+            return
+
+        status = "فعال" if item["active"] else "غیرفعال"
+        has_file = "دارد" if item.get("file_id") else "ندارد"
+        has_video = "دارد" if item.get("video_file_id") else "ندارد"
+        body_preview = (item.get("body_text") or "")[:120]
+
+        await query.message.edit_text(
+            f"📚 {item['title']}\n\n"
+            f"وضعیت: {status}\n"
+            f"فایل نصب: {has_file}\n"
+            f"ویدیو: {has_video}\n\n"
+            f"متن:\n{body_preview}",
+            reply_markup=admin_tutorial_item_keyboard(tutorial_id)
+        )
+
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_tut_text_\d+$")
+    )
+    async def admin_tut_text(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        tutorial_id = int(query.data.split("_")[-1])
+
+        admin_states[query.from_user.id] = {
+            "step": "tut_text",
+            "tutorial_id": tutorial_id
+        }
+
+        await query.message.reply_text(
+            "✏️ متن کامل این آموزش را ارسال کنید:\n\n"
+            "همین متن وقتی کاربر روی دکمه بزند نمایش داده می‌شود."
+        )
+
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_tut_file_\d+$")
+    )
+    async def admin_tut_file(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        tutorial_id = int(query.data.split("_")[-1])
+
+        admin_states[query.from_user.id] = {
+            "step": "tut_file",
+            "tutorial_id": tutorial_id
+        }
+
+        await query.message.reply_text(
+            "📎 فایل نصب (APK یا هر فایل دیگر) را همینجا ارسال کنید.\n"
+            "برای پاک کردن فایل، کلمه clear را بفرستید."
+        )
+
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_tut_video_\d+$")
+    )
+    async def admin_tut_video(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        tutorial_id = int(query.data.split("_")[-1])
+
+        admin_states[query.from_user.id] = {
+            "step": "tut_video",
+            "tutorial_id": tutorial_id
+        }
+
+        await query.message.reply_text(
+            "🎬 ویدیو آموزشی را همینجا ارسال کنید.\n"
+            "برای پاک کردن، کلمه clear را بفرستید."
+        )
+
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_tut_toggle_\d+$")
+    )
+    async def admin_tut_toggle(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        tutorial_id = int(query.data.split("_")[-1])
+        new_state = toggle_tutorial(tutorial_id)
+
+        tutorials = get_tutorials(False)
+
+        await query.message.edit_text(
+            "📚 مدیریت آموزش‌ها",
+            reply_markup=admin_tutorials_keyboard(tutorials)
+        )
+
+        await query.answer(
+            "🟢 فعال شد." if new_state else "🔴 غیرفعال شد."
+        )
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_tut_del_\d+$")
+    )
+    async def admin_tut_del(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        tutorial_id = int(query.data.split("_")[-1])
+        delete_tutorial(tutorial_id)
+
+        tutorials = get_tutorials(False)
+
+        await query.message.edit_text(
+            "📚 مدیریت آموزش‌ها\n\nآیتم حذف شد.",
+            reply_markup=admin_tutorials_keyboard(tutorials)
+        )
+
+        await query.answer("حذف شد.")
+
+
+    @app.on_callback_query(
+        filters.regex("^admin_tut_add$")
+    )
+    async def admin_tut_add(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        admin_states[query.from_user.id] = {
+            "step": "tut_add_title"
+        }
+
+        await query.message.reply_text(
+            "➕ عنوان دکمه آموزش جدید را بنویسید:\n\n"
+            "مثال: آموزش اتصال در مک"
+        )
+
+        await query.answer()
+
+
+
     # =========================================================
     # پشتیبان‌گیری
     # =========================================================
@@ -1695,3 +2162,70 @@ def register(app, config):
         await query.answer(
             "بازگردانی انجام شد."
         )
+
+    @app.on_message(
+        filters.private & (
+            filters.document | filters.video | filters.animation
+        ),
+        group=-1
+    )
+    async def admin_media(client, message):
+
+        user_id = message.from_user.id
+
+        if not admin(user_id, config):
+            return
+
+        state = admin_states.get(user_id)
+
+        if not state:
+            return
+
+        step = state.get("step")
+
+        if step not in ("tut_file", "tut_video", "restore_backup"):
+            return
+
+        if step == "restore_backup":
+            # leave to restore handler if document zip
+            if message.document and (message.document.file_name or "").lower().endswith(".zip"):
+                return
+            return
+
+        tutorial_id = state["tutorial_id"]
+
+        file_id = None
+
+        if message.document:
+            file_id = message.document.file_id
+        elif message.video:
+            file_id = message.video.file_id
+        elif message.animation:
+            file_id = message.animation.file_id
+
+        if not file_id:
+
+            await message.reply_text("❌ فایل معتبر نیست.")
+            raise StopPropagation
+
+        field = "file_id" if step == "tut_file" else "video_file_id"
+
+        update_tutorial_field(
+            tutorial_id,
+            field,
+            file_id
+        )
+
+        admin_states.pop(user_id, None)
+
+        label = "فایل نصب" if step == "tut_file" else "ویدیو"
+
+        await message.reply_text(
+            f"✅ {label} ذخیره شد.\n"
+            "وقتی کاربر این آموزش را بزند، این فایل برایش ارسال می‌شود.",
+            reply_markup=admin_reply_menu()
+        )
+
+        raise StopPropagation
+
+
