@@ -1095,3 +1095,54 @@ def delete_tutorial(tutorial_id):
 
     conn.commit()
     conn.close()
+
+
+def get_user_orders_admin(user_id):
+    """alias - same as get_user_orders"""
+    return get_user_orders(user_id)
+
+
+def delete_user_subscriptions(user_id):
+    conn = get_connection()
+    conn.execute(
+        "DELETE FROM subscriptions WHERE user_id = ?",
+        (user_id,)
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def reset_user_info(user_id):
+    """
+    ریست اطلاعات کاربر:
+    - اشتراک‌ها حذف می‌شوند
+    - هشدار حجم کم صفر می‌شود
+    - شمارنده‌های دعوت صفر می‌شود
+    سفارش‌ها برای تاریخچه نگه داشته می‌شوند.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        "DELETE FROM subscriptions WHERE user_id = ?",
+        (user_id,)
+    )
+
+    cur.execute("""
+        UPDATE users
+        SET referral_success = 0,
+            referral_reward_count = 0,
+            low_volume_warned = 0
+        WHERE id = ?
+    """, (user_id,))
+
+    # pending referral rewards for this user
+    cur.execute(
+        "DELETE FROM referral_rewards WHERE user_id = ? AND status = 'pending'",
+        (user_id,)
+    )
+
+    conn.commit()
+    conn.close()
+    return True
