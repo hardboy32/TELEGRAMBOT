@@ -1,21 +1,16 @@
 {
-  "admin_ids": [6422159617],
-
+  "admin_ids": [
+    6422159617
+  ],
   "channel_username": "@YOUR_CHANNEL",
-
   "payment_card": "YOUR_CARD",
   "payment_name": "CARD_OWNER",
-
   "bot_name": "کافه هرمس",
-
   "low_volume_gb": 1,
-
   "hermes_check_enabled": true,
-
   "welcome_enabled": true,
   "join_required_enabled": true,
   "low_volume_notification_enabled": true,
-
   "buy_enabled": true,
   "renew_enabled": true,
   "subscriptions_enabled": true,
@@ -26,7 +21,8 @@
   "account_enabled": true,
   "support_enabled": true,
   "tutorial_enabled": true,
-
   "free_test_enabled": false,
-  "festival_enabled": false
+  "festival_enabled": false,
+  "auto_backup_enabled": true,
+  "auto_backup_hours": 24
 }
