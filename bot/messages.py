@@ -15,9 +15,13 @@ def join_required(channel):
 
 
 def payment(card, name):
+    card = str(card).strip()
+    name = str(name).strip()
+
     return (
         "💳 اطلاعات پرداخت\n\n"
-        f"شماره کارت:\n{card}\n\n"
+        "شماره کارت (برای کپی لمس کنید):\n"
+        f"<code>{card}</code>\n\n"
         f"به نام:\n{name}\n\n"
         "بعد از پرداخت، عکس رسید را همینجا ارسال کنید."
     )
