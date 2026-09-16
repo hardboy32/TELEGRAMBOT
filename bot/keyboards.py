@@ -81,135 +81,165 @@ def join_keyboard(channel):
     )
 
 
-def services_keyboard(services):
+def services_reply_keyboard(services):
     rows = []
 
     for service in services:
         rows.append(
             [
-                InlineKeyboardButton(
-                    f"📦 {service['name']} | {service['volume_gb']}GB",
-                    callback_data=f"service_{service['id']}"
+                KeyboardButton(
+                    f"📦 {service['name']} | {service['volume_gb']}GB"
                 )
             ]
         )
 
     rows.append(
         [
-            InlineKeyboardButton(
-                "❌ بستن",
-                callback_data="user_home"
-            )
+            KeyboardButton("⬅️ بازگشت")
         ]
     )
 
-    return InlineKeyboardMarkup(rows)
+    return ReplyKeyboardMarkup(
+        rows,
+        resize_keyboard=True,
+        is_persistent=True
+    )
 
 
-def confirm_order_keyboard():
-    return InlineKeyboardMarkup(
+def confirm_reply_keyboard():
+    return ReplyKeyboardMarkup(
         [
             [
-                InlineKeyboardButton(
-                    "✅ تأیید سفارش",
-                    callback_data="confirm_order"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "❌ لغو",
-                    callback_data="user_home"
-                )
+                KeyboardButton("✅ تأیید سفارش"),
+                KeyboardButton("❌ لغو سفارش")
             ]
-        ]
+        ],
+        resize_keyboard=True,
+        is_persistent=True
     )
 
 
-def payment_keyboard():
-    return InlineKeyboardMarkup(
+def payment_reply_keyboard(is_admin=False):
+    rows = [
         [
-            [
-                InlineKeyboardButton(
-                    "💳 اطلاعات پرداخت",
-                    callback_data="payment_info"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "❌ لغو سفارش",
-                    callback_data="user_home"
-                )
-            ]
+            KeyboardButton("❌ لغو سفارش")
+        ],
+        [
+            KeyboardButton("🏠 منوی اصلی")
         ]
-    )
+    ]
 
-
-def subscriptions_keyboard(subscriptions):
-    rows = []
-
-    for sub in subscriptions:
+    if is_admin:
         rows.append(
             [
-                InlineKeyboardButton(
-                    f"📦 {sub['service_name']} | @{sub['username']}",
-                    callback_data=f"sub_{sub['id']}"
-                )
+                KeyboardButton("⚙️ پنل مدیریت")
             ]
         )
 
-    return InlineKeyboardMarkup(rows)
-
-
-def renew_keyboard(subscriptions):
-    rows = []
-
-    for sub in subscriptions:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    f"🔄 {sub['service_name']} | @{sub['username']}",
-                    callback_data=f"renew_{sub['id']}"
-                )
-            ]
-        )
-
-    return InlineKeyboardMarkup(rows)
-
-
-def back_home_keyboard():
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "🏠 منوی اصلی",
-                    callback_data="user_home"
-                )
-            ]
-        ]
+    return ReplyKeyboardMarkup(
+        rows,
+        resize_keyboard=True,
+        is_persistent=True
     )
 
 
-
-def tutorials_keyboard(tutorials):
+def tutorials_reply_keyboard(tutorials):
     rows = []
 
     for item in tutorials:
         rows.append(
             [
-                InlineKeyboardButton(
-                    item["title"],
-                    callback_data=f"tutorial_{item['id']}"
+                KeyboardButton(item["title"])
+            ]
+        )
+
+    rows.append(
+        [
+            KeyboardButton("⬅️ بازگشت")
+        ]
+    )
+
+    return ReplyKeyboardMarkup(
+        rows,
+        resize_keyboard=True,
+        is_persistent=True
+    )
+
+
+def subscriptions_reply_keyboard(subscriptions, prefix="📦"):
+    rows = []
+
+    for sub in subscriptions:
+        rows.append(
+            [
+                KeyboardButton(
+                    f"{prefix} {sub['service_name']} | @{sub['username']}"
                 )
             ]
         )
 
     rows.append(
         [
-            InlineKeyboardButton(
-                "🏠 منوی اصلی",
-                callback_data="user_home"
-            )
+            KeyboardButton("⬅️ بازگشت")
         ]
     )
 
-    return InlineKeyboardMarkup(rows)
+    return ReplyKeyboardMarkup(
+        rows,
+        resize_keyboard=True,
+        is_persistent=True
+    )
+
+
+def order_admin_keyboard(order_id):
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ تأیید",
+                    callback_data=f"approve_{order_id}"
+                ),
+                InlineKeyboardButton(
+                    "❌ رد",
+                    callback_data=f"reject_{order_id}"
+                )
+            ]
+        ]
+    )
+
+
+# سازگاری با کد قدیمی (اگر جایی هنوز صدا زده شود)
+def services_keyboard(services):
+    return services_reply_keyboard(services)
+
+
+def confirm_order_keyboard():
+    return confirm_reply_keyboard()
+
+
+def payment_keyboard(is_admin=False):
+    return payment_reply_keyboard(is_admin)
+
+
+def subscriptions_keyboard(subscriptions):
+    return subscriptions_reply_keyboard(subscriptions, "📦")
+
+
+def renew_keyboard(subscriptions):
+    return subscriptions_reply_keyboard(subscriptions, "🔄")
+
+
+def tutorials_keyboard(tutorials):
+    return tutorials_reply_keyboard(tutorials)
+
+
+def back_home_keyboard():
+    return ReplyKeyboardMarkup(
+        [
+            [
+                KeyboardButton("🏠 منوی اصلی")
+            ]
+        ],
+        resize_keyboard=True,
+        is_persistent=True
+    )
