@@ -1,3 +1,4 @@
+import os
 from pyrogram import filters, StopPropagation
 from pyrogram.types import (
     ReplyKeyboardMarkup,
@@ -6,7 +7,13 @@ from pyrogram.types import (
     InlineKeyboardButton
 )
 
-from bot.helpers import admin, format_price
+from bot.helpers import admin, format_price, save_config
+
+from bot.backup import (
+    create_backup,
+    inspect_backup,
+    restore_backup
+)
 
 from bot.database import (
     get_pending_orders,
@@ -99,6 +106,37 @@ def admin_panel_keyboard():
                 InlineKeyboardButton(
                     "💳 تنظیمات پرداخت",
                     callback_data="admin_payment"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "💾 پشتیبان‌گیری",
+                    callback_data="admin_backup"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "♻️ بازگردانی بکاپ",
+                    callback_data="admin_restore"
+                )
+            ]
+        ]
+    )
+
+
+def restore_confirm_keyboard():
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ تأیید بازگردانی",
+                    callback_data="admin_restore_confirm"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "❌ لغو",
+                    callback_data="admin_home"
                 )
             ]
         ]
@@ -639,13 +677,15 @@ def register(app, config):
 
             config["payment_name"] = text
 
+            save_config(config)
+
             admin_states.pop(
                 user_id,
                 None
             )
 
             await message.reply_text(
-                "✅ اطلاعات پرداخت برای اجرای فعلی تغییر کرد.",
+                "✅ اطلاعات پرداخت ذخیره شد.",
                 reply_markup=admin_reply_menu()
             )
 
@@ -1390,6 +1430,8 @@ def register(app, config):
             config.get(key, False)
         )
 
+        save_config(config)
+
         await query.message.edit_text(
             "⚙️ تنظیمات دکمه‌های کاربر",
             reply_markup=buttons_keyboard(config)
@@ -1425,3 +1467,231 @@ def register(app, config):
         )
 
         await query.answer()
+
+    # =========================================================
+    # پشتیبان‌گیری
+    # =========================================================
+
+    @app.on_callback_query(
+        filters.regex("^admin_backup$")
+    )
+    async def admin_backup(client, query):
+
+        if not admin(
+            query.from_user.id,
+            config
+        ):
+            await query.answer(
+                "❌ دسترسی ندارید.",
+                show_alert=True
+            )
+            return
+
+        await query.answer(
+            "در حال ساخت بکاپ..."
+        )
+
+        try:
+
+            zip_path = create_backup(config)
+
+            await client.send_document(
+                query.from_user.id,
+                zip_path,
+                caption=(
+                    "💾 بکاپ کامل کافه هرمس\n\n"
+                    "این فایل شامل دیتابیس کاربران، "
+                    "سفارش‌ها، اشتراک‌ها و تنظیمات است.\n\n"
+                    "حتماً آن را در Saved Messages "
+                    "یا جای امن ذخیره کنید.\n"
+                    "اگر Infrlo قطع شد، با همین فایل "
+                    "می‌توانید همه چیز را برگردانید."
+                )
+            )
+
+            await query.message.reply_text(
+                "✅ بکاپ ساخته شد و برایتان ارسال گردید.",
+                reply_markup=admin_reply_menu()
+            )
+
+        except Exception as e:
+
+            await query.message.reply_text(
+                f"❌ خطا در ساخت بکاپ:\n{e}",
+                reply_markup=admin_reply_menu()
+            )
+
+    # =========================================================
+    # شروع بازگردانی
+    # =========================================================
+
+    @app.on_callback_query(
+        filters.regex("^admin_restore$")
+    )
+    async def admin_restore(client, query):
+
+        if not admin(
+            query.from_user.id,
+            config
+        ):
+            await query.answer(
+                "❌ دسترسی ندارید.",
+                show_alert=True
+            )
+            return
+
+        admin_states[
+            query.from_user.id
+        ] = {
+            "step": "restore_backup"
+        }
+
+        await query.message.reply_text(
+            "♻️ بازگردانی بکاپ\n\n"
+            "فایل zip بکاپ را همینجا ارسال کنید.\n\n"
+            "⚠️ با تأیید نهایی، اطلاعات فعلی "
+            "با اطلاعات داخل بکاپ جایگزین می‌شود.\n"
+            "قبل از جایگزینی، یک کپی از دیتابیس فعلی "
+            "به صورت خودکار نگه داشته می‌شود."
+        )
+
+        await query.answer()
+
+    # =========================================================
+    # دریافت فایل بکاپ
+    # =========================================================
+
+    @app.on_message(
+        filters.private & filters.document,
+        group=-1
+    )
+    async def admin_restore_file(client, message):
+
+        user_id = message.from_user.id
+
+        if not admin(user_id, config):
+            return
+
+        state = admin_states.get(user_id)
+
+        if not state or state.get("step") != "restore_backup":
+            return
+
+        doc = message.document
+
+        file_name = (doc.file_name or "").lower()
+
+        if not file_name.endswith(".zip"):
+
+            await message.reply_text(
+                "❌ فقط فایل zip بکاپ قبول است."
+            )
+
+            raise StopPropagation
+
+        if doc.file_size and doc.file_size > 20 * 1024 * 1024:
+
+            await message.reply_text(
+                "❌ حجم فایل بیش از ۲۰ مگابایت است."
+            )
+
+            raise StopPropagation
+
+        os.makedirs("data/backups", exist_ok=True)
+
+        saved = await client.download_media(
+            message.document,
+            file_name="data/backups/incoming_restore.zip"
+        )
+
+        info = inspect_backup(saved)
+
+        if not info.get("ok"):
+
+            await message.reply_text(
+                f"❌ {info.get('message', 'بکاپ نامعتبر است.')}"
+            )
+
+            raise StopPropagation
+
+        admin_states[user_id] = {
+            "step": "restore_confirm",
+            "zip_path": saved
+        }
+
+        config_text = (
+            "بله"
+            if info.get("has_config")
+            else "خیر"
+        )
+
+        await message.reply_text(
+            "📦 مشخصات بکاپ:\n\n"
+            f"👥 کاربران: {info['users']}\n"
+            f"🧾 سفارش‌ها: {info['orders']}\n"
+            f"📦 سرویس‌ها: {info['services']}\n"
+            f"🔗 اشتراک‌ها: {info['subscriptions']}\n"
+            f"⚙️ فایل تنظیمات: {config_text}\n\n"
+            "اگر مورد تأیید است، بازگردانی را تأیید کنید.",
+            reply_markup=restore_confirm_keyboard()
+        )
+
+        raise StopPropagation
+
+    # =========================================================
+    # تأیید بازگردانی
+    # =========================================================
+
+    @app.on_callback_query(
+        filters.regex("^admin_restore_confirm$")
+    )
+    async def admin_restore_confirm(client, query):
+
+        user_id = query.from_user.id
+
+        if not admin(user_id, config):
+            await query.answer(
+                "❌ دسترسی ندارید.",
+                show_alert=True
+            )
+            return
+
+        state = admin_states.get(user_id)
+
+        if not state or state.get("step") != "restore_confirm":
+            await query.answer(
+                "❌ درخواست بازگردانی منقضی شده.",
+                show_alert=True
+            )
+            return
+
+        zip_path = state.get("zip_path")
+
+        result = restore_backup(zip_path, config)
+
+        admin_states.pop(user_id, None)
+
+        if not result.get("ok"):
+
+            await query.message.reply_text(
+                f"❌ {result.get('message', 'بازگردانی ناموفق بود.')}",
+                reply_markup=admin_reply_menu()
+            )
+
+            await query.answer()
+            return
+
+        await query.message.reply_text(
+            "✅ بکاپ با موفقیت بازگردانی شد.\n\n"
+            f"👥 کاربران: {result.get('users', 0)}\n"
+            f"🧾 سفارش‌ها: {result.get('orders', 0)}\n"
+            f"📦 سرویس‌ها: {result.get('services', 0)}\n"
+            f"🔗 اشتراک‌ها: {result.get('subscriptions', 0)}\n\n"
+            "اطلاعات قبلی در پوشه data با پسوند "
+            "before_restore نگه داشته شد.",
+            reply_markup=admin_reply_menu()
+        )
+
+        await query.answer(
+            "بازگردانی انجام شد."
+        )
