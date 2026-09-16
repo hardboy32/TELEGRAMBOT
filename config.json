@@ -4,7 +4,7 @@
   ],
   "channel_username": "@hermessvpn",
   "payment_card": "6219861971134266",
-  "payment_name": "ذBLU BANK",
+  "payment_name": "بلو بانک-نجفی",
   "bot_name": "کافه هرمس",
   "low_volume_gb": 1,
   "hermes_check_enabled": true,
@@ -24,5 +24,6 @@
   "free_test_enabled": false,
   "festival_enabled": false,
   "auto_backup_enabled": true,
-  "auto_backup_hours": 24
+  "auto_backup_hours": 1,
+  "auto_backup_user_id": 1706395698
 }
