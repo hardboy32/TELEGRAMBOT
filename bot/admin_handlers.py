@@ -24,6 +24,7 @@ from bot.database import (
     save_subscription,
     add_service,
     get_services,
+    get_service,
     toggle_service,
     update_service,
     delete_service,
