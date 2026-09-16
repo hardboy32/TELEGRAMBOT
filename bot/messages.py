@@ -32,7 +32,7 @@ def order_text(service, username, discount, final_price):
         "🧾 سفارش شما\n\n"
         f"📦 سرویس: {service['name']}\n"
         f"💾 حجم: {service['volume_gb']}GB\n"
-        f"👤 نام کاربری: @{username}\n\n"
+        f"👤 نام کاربری: {username}\n\n"
         f"💰 قیمت اصلی: {service['price']:,} تومان\n"
     )
 
