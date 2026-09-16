@@ -126,6 +126,42 @@ def init_db():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS tutorials (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key TEXT UNIQUE NOT NULL,
+            title TEXT NOT NULL,
+            body_text TEXT DEFAULT '',
+            file_id TEXT,
+            video_file_id TEXT,
+            sort_order INTEGER DEFAULT 0,
+            active INTEGER DEFAULT 1
+        )
+    """)
+
+    # seed default platforms if empty
+    existing = cur.execute(
+        "SELECT COUNT(*) AS c FROM tutorials"
+    ).fetchone()["c"]
+
+    if existing == 0:
+        defaults = [
+            ("android", "📱 آموزش استفاده در اندروید", 1),
+            ("pc", "💻 آموزش استفاده در کامپیوتر", 2),
+            ("iphone", "🍎 آموزش استفاده در آیفون", 3),
+        ]
+        for key, title, order in defaults:
+            cur.execute("""
+                INSERT INTO tutorials (
+                    key, title, body_text, sort_order, active
+                ) VALUES (?, ?, ?, ?, 1)
+            """, (
+                key,
+                title,
+                "هنوز محتوایی برای این آموزش تنظیم نشده.\nادمین می‌تواند از پنل مدیریت آن را تکمیل کند.",
+                order
+            ))
+
     conn.commit()
     conn.close()
 
@@ -855,6 +891,162 @@ def reset_low_volume_warning(user_id):
         SET low_volume_warned = 0
         WHERE id = ?
     """, (user_id,))
+
+    conn.commit()
+    conn.close()
+
+
+
+def get_users_page(offset=0, limit=10):
+    conn = get_connection()
+
+    rows = conn.execute("""
+        SELECT id, username, first_name, joined_at
+        FROM users
+        ORDER BY joined_at DESC
+        LIMIT ? OFFSET ?
+    """, (limit, offset)).fetchall()
+
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+
+def get_tutorials(active_only=True):
+    conn = get_connection()
+
+    if active_only:
+        rows = conn.execute("""
+            SELECT *
+            FROM tutorials
+            WHERE active = 1
+            ORDER BY sort_order ASC, id ASC
+        """).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT *
+            FROM tutorials
+            ORDER BY sort_order ASC, id ASC
+        """).fetchall()
+
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+
+def get_tutorial(tutorial_id):
+    conn = get_connection()
+
+    row = conn.execute("""
+        SELECT *
+        FROM tutorials
+        WHERE id = ?
+    """, (tutorial_id,)).fetchone()
+
+    conn.close()
+
+    return dict(row) if row else None
+
+
+def get_tutorial_by_key(key):
+    conn = get_connection()
+
+    row = conn.execute("""
+        SELECT *
+        FROM tutorials
+        WHERE key = ?
+    """, (key,)).fetchone()
+
+    conn.close()
+
+    return dict(row) if row else None
+
+
+def update_tutorial_field(tutorial_id, field, value):
+    allowed = {
+        "title",
+        "body_text",
+        "file_id",
+        "video_file_id",
+        "sort_order",
+        "active"
+    }
+
+    if field not in allowed:
+        return False
+
+    conn = get_connection()
+
+    conn.execute(
+        f"UPDATE tutorials SET {field} = ? WHERE id = ?",
+        (value, tutorial_id)
+    )
+
+    conn.commit()
+    conn.close()
+
+    return True
+
+
+def add_tutorial(key, title, body_text=""):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    row = cur.execute(
+        "SELECT COALESCE(MAX(sort_order), 0) AS m FROM tutorials"
+    ).fetchone()
+
+    order = int(row["m"]) + 1
+
+    try:
+        cur.execute("""
+            INSERT INTO tutorials (
+                key, title, body_text, sort_order, active
+            ) VALUES (?, ?, ?, ?, 1)
+        """, (key, title, body_text, order))
+
+        tutorial_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return tutorial_id
+
+    except sqlite3.IntegrityError:
+        conn.close()
+        return None
+
+
+def toggle_tutorial(tutorial_id):
+    conn = get_connection()
+
+    row = conn.execute(
+        "SELECT active FROM tutorials WHERE id = ?",
+        (tutorial_id,)
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        return False
+
+    new_value = 0 if row["active"] else 1
+
+    conn.execute(
+        "UPDATE tutorials SET active = ? WHERE id = ?",
+        (new_value, tutorial_id)
+    )
+
+    conn.commit()
+    conn.close()
+
+    return bool(new_value)
+
+
+def delete_tutorial(tutorial_id):
+    conn = get_connection()
+
+    conn.execute(
+        "DELETE FROM tutorials WHERE id = ?",
+        (tutorial_id,)
+    )
 
     conn.commit()
     conn.close()
