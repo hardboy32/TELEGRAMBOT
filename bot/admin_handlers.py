@@ -8,6 +8,7 @@ from pyrogram.types import (
 )
 
 from bot.helpers import admin, format_price, save_config
+from bot.keyboards import main_menu
 
 from bot.backup import (
     create_backup,
@@ -47,10 +48,37 @@ admin_states = {}
 
 
 def admin_reply_menu():
+    """
+    کیبورد ثابت پایین صفحه برای پنل مدیریت
+    """
     return ReplyKeyboardMarkup(
         [
             [
-                KeyboardButton("⚙️ پنل مدیریت")
+                KeyboardButton("🧾 سفارش‌های در انتظار"),
+                KeyboardButton("📦 مدیریت سرویس‌ها")
+            ],
+            [
+                KeyboardButton("👥 کاربران"),
+                KeyboardButton("📊 آمار")
+            ],
+            [
+                KeyboardButton("🎟️ کد تخفیف"),
+                KeyboardButton("🎁 پاداش‌های دعوت")
+            ],
+            [
+                KeyboardButton("📢 پیام همگانی"),
+                KeyboardButton("⚙️ تنظیمات دکمه‌ها")
+            ],
+            [
+                KeyboardButton("💳 تنظیمات پرداخت"),
+                KeyboardButton("📚 مدیریت آموزش")
+            ],
+            [
+                KeyboardButton("💾 پشتیبان‌گیری"),
+                KeyboardButton("♻️ بازگردانی بکاپ")
+            ],
+            [
+                KeyboardButton("🏠 منوی کاربر")
             ]
         ],
         resize_keyboard=True,
@@ -479,8 +507,261 @@ def register(app, config):
             )
 
             await message.reply_text(
-                "⚙️ پنل مدیریت",
-                reply_markup=admin_panel_keyboard()
+                "⚙️ پنل مدیریت\n\n"
+                "از دکمه‌های پایین صفحه استفاده کنید.",
+                reply_markup=admin_reply_menu()
+            )
+
+            raise StopPropagation
+
+        if text == "🏠 منوی کاربر":
+
+            admin_states.pop(user_id, None)
+
+            await message.reply_text(
+                "🏠 منوی کاربر",
+                reply_markup=main_menu(
+                    config,
+                    is_admin=True
+                )
+            )
+
+            raise StopPropagation
+
+        # دکمه‌های ثابت پنل (ReplyKeyboard)
+        if text == "🧾 سفارش‌های در انتظار":
+
+            orders = get_pending_orders()
+
+            if not orders:
+                await message.reply_text(
+                    "🧾 هیچ سفارش در انتظاری وجود ندارد.",
+                    reply_markup=admin_reply_menu()
+                )
+                raise StopPropagation
+
+            rows = []
+
+            for order in orders:
+                rows.append(
+                    [
+                        InlineKeyboardButton(
+                            f"#{order['id']} | "
+                            f"{order['service_name']} | "
+                            f"{format_price(order['final_price'])}",
+                            callback_data=f"admin_order_{order['id']}"
+                        )
+                    ]
+                )
+
+            await message.reply_text(
+                "🧾 سفارش‌های در انتظار:",
+                reply_markup=InlineKeyboardMarkup(rows)
+            )
+
+            raise StopPropagation
+
+        if text == "📦 مدیریت سرویس‌ها":
+
+            services = get_services(False)
+
+            await message.reply_text(
+                "📦 مدیریت سرویس‌ها",
+                reply_markup=service_admin_keyboard(services)
+            )
+
+            raise StopPropagation
+
+        if text == "👥 کاربران":
+
+            count = get_users_count()
+            page_size = 10
+            users = get_users_page(0, page_size)
+
+            lines = [
+                "👥 کاربران\n",
+                f"تعداد کل: {count}\n"
+            ]
+
+            rows = []
+
+            for u in users:
+                uname = u.get("username") or "—"
+                name = u.get("first_name") or "—"
+                lines.append(
+                    f"🆔 `{u['id']}` | @{uname} | {name}"
+                )
+                rows.append(
+                    [
+                        InlineKeyboardButton(
+                            f"✉️ پیام به {u['id']}",
+                            callback_data=f"admin_msg_{u['id']}"
+                        )
+                    ]
+                )
+
+            if count > page_size:
+                rows.append(
+                    [
+                        InlineKeyboardButton(
+                            "بعدی ➡️",
+                            callback_data=f"admin_users_page_{page_size}"
+                        )
+                    ]
+                )
+
+            await message.reply_text(
+                "\n".join(lines),
+                reply_markup=InlineKeyboardMarkup(rows)
+            )
+
+            raise StopPropagation
+
+        if text == "📊 آمار":
+
+            users = get_users_count()
+            orders = get_orders_count()
+            pending = len(get_pending_orders())
+
+            await message.reply_text(
+                "📊 آمار ربات\n\n"
+                f"👥 کاربران: {users}\n"
+                f"🧾 کل سفارش‌ها: {orders}\n"
+                f"⏳ در انتظار: {pending}",
+                reply_markup=admin_reply_menu()
+            )
+
+            raise StopPropagation
+
+        if text == "🎟️ کد تخفیف":
+
+            admin_states[user_id] = {
+                "step": "coupon"
+            }
+
+            await message.reply_text(
+                "🎟️ کد تخفیف را این‌طور بفرستید:\n\n"
+                "کد درصد\n\n"
+                "مثال:\nHERMES20 20"
+            )
+
+            raise StopPropagation
+
+        if text == "🎁 پاداش‌های دعوت":
+
+            rewards = get_pending_rewards()
+
+            if not rewards:
+                await message.reply_text(
+                    "🎁 پاداش در انتظاری نیست.",
+                    reply_markup=admin_reply_menu()
+                )
+                raise StopPropagation
+
+            rows = []
+
+            for r in rewards:
+                rows.append(
+                    [
+                        InlineKeyboardButton(
+                            f"🎁 {r['user_id']} | {r.get('volume_gb', 10)}GB",
+                            callback_data=f"admin_reward_{r['id']}"
+                        )
+                    ]
+                )
+
+            await message.reply_text(
+                "🎁 پاداش‌های دعوت در انتظار:",
+                reply_markup=InlineKeyboardMarkup(rows)
+            )
+
+            raise StopPropagation
+
+        if text == "📢 پیام همگانی":
+
+            admin_states[user_id] = {
+                "step": "broadcast"
+            }
+
+            await message.reply_text(
+                "📢 متن پیام همگانی را ارسال کنید:"
+            )
+
+            raise StopPropagation
+
+        if text == "⚙️ تنظیمات دکمه‌ها":
+
+            await message.reply_text(
+                "⚙️ تنظیمات دکمه‌های کاربر",
+                reply_markup=buttons_keyboard(config)
+            )
+
+            raise StopPropagation
+
+        if text == "💳 تنظیمات پرداخت":
+
+            admin_states[user_id] = {
+                "step": "payment_card"
+            }
+
+            await message.reply_text(
+                "💳 شماره کارت جدید را وارد کنید:"
+            )
+
+            raise StopPropagation
+
+        if text == "📚 مدیریت آموزش":
+
+            tutorials = get_tutorials(False)
+
+            await message.reply_text(
+                "📚 مدیریت آموزش‌ها\n\n"
+                "روی هر مورد بزنید تا متن، فایل یا ویدیو را تنظیم کنید.",
+                reply_markup=admin_tutorials_keyboard(tutorials)
+            )
+
+            raise StopPropagation
+
+        if text == "💾 پشتیبان‌گیری":
+
+            await message.reply_text(
+                "در حال ساخت بکاپ..."
+            )
+
+            try:
+                zip_path = create_backup(config)
+
+                await client.send_document(
+                    user_id,
+                    zip_path,
+                    caption=(
+                        "💾 بکاپ کامل کافه هرمس\n\n"
+                        "حتماً در Saved Messages ذخیره کنید."
+                    )
+                )
+
+                await message.reply_text(
+                    "✅ بکاپ ارسال شد.",
+                    reply_markup=admin_reply_menu()
+                )
+
+            except Exception as e:
+
+                await message.reply_text(
+                    f"❌ خطا در ساخت بکاپ:\n{e}",
+                    reply_markup=admin_reply_menu()
+                )
+
+            raise StopPropagation
+
+        if text == "♻️ بازگردانی بکاپ":
+
+            admin_states[user_id] = {
+                "step": "restore_backup"
+            }
+
+            await message.reply_text(
+                "♻️ فایل zip بکاپ را همینجا ارسال کنید."
             )
 
             raise StopPropagation
@@ -894,8 +1175,12 @@ def register(app, config):
         )
 
         await query.message.edit_text(
-            "⚙️ پنل مدیریت",
-            reply_markup=admin_panel_keyboard()
+            "⚙️ پنل مدیریت — از دکمه‌های پایین استفاده کنید."
+        )
+
+        await query.message.reply_text(
+            "منوی مدیریت فعال است.",
+            reply_markup=admin_reply_menu()
         )
 
         await query.answer()
