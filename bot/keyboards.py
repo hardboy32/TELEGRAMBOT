@@ -107,15 +107,26 @@ def services_reply_keyboard(services):
 
 
 def confirm_reply_keyboard():
-    return ReplyKeyboardMarkup(
+    """سازگاری قدیمی — تأیید سفارش اینلاین زیر پیام است."""
+    return confirm_order_keyboard()
+
+
+def confirm_order_keyboard():
+    return InlineKeyboardMarkup(
         [
             [
-                KeyboardButton("✅ تأیید سفارش"),
-                KeyboardButton("❌ لغو سفارش")
+                InlineKeyboardButton(
+                    "✅ تأیید سفارش",
+                    callback_data="confirm_order"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "❌ لغو سفارش",
+                    callback_data="user_home"
+                )
             ]
-        ],
-        resize_keyboard=True,
-        is_persistent=True
+        ]
     )
 
 
@@ -211,10 +222,6 @@ def order_admin_keyboard(order_id):
 # سازگاری با کد قدیمی (اگر جایی هنوز صدا زده شود)
 def services_keyboard(services):
     return services_reply_keyboard(services)
-
-
-def confirm_order_keyboard():
-    return confirm_reply_keyboard()
 
 
 def payment_keyboard(is_admin=False):
