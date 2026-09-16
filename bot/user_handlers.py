@@ -36,6 +36,7 @@ from bot.keyboards import (
     join_keyboard,
     services_reply_keyboard,
     confirm_reply_keyboard,
+    confirm_order_keyboard,
     payment_reply_keyboard,
     subscriptions_reply_keyboard,
     tutorials_reply_keyboard,
@@ -672,7 +673,7 @@ def register(app, config):
                     0,
                     final_price
                 ),
-                reply_markup=confirm_reply_keyboard()
+                reply_markup=confirm_order_keyboard()
             )
 
             return
@@ -804,7 +805,7 @@ def register(app, config):
                 return
 
             await message.reply_text(
-                "برای ادامه «✅ تأیید سفارش» یا «❌ لغو سفارش» را بزنید."
+                "لطفاً از دکمه‌های زیر پیام سفارش استفاده کنید."
             )
 
             return
@@ -882,7 +883,7 @@ def register(app, config):
                     discount,
                     final_price
                 ),
-                reply_markup=confirm_reply_keyboard()
+                reply_markup=confirm_order_keyboard()
             )
 
             return
