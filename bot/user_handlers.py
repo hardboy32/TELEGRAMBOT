@@ -87,7 +87,10 @@ def register(app, config):
             welcome(
                 message.from_user.first_name or "دوست من"
             ),
-            reply_markup=main_menu(config)
+            reply_markup=main_menu(
+                config,
+                is_admin=admin(message.from_user.id, config)
+            )
         )
 
     @app.on_message(
