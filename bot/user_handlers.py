@@ -34,13 +34,12 @@ from bot.helpers import (
 from bot.keyboards import (
     main_menu,
     join_keyboard,
-    services_keyboard,
-    confirm_order_keyboard,
-    payment_keyboard,
-    subscriptions_keyboard,
-    renew_keyboard,
-    back_home_keyboard,
-    tutorials_keyboard
+    services_reply_keyboard,
+    confirm_reply_keyboard,
+    payment_reply_keyboard,
+    subscriptions_reply_keyboard,
+    tutorials_reply_keyboard,
+    order_admin_keyboard
 )
 
 from bot.messages import (
@@ -55,6 +54,13 @@ from bot.messages import (
 
 
 user_states = {}
+
+
+def _menu(config, user_id):
+    return main_menu(
+        config,
+        is_admin=admin(user_id, config)
+    )
 
 
 def register(app, config):
@@ -164,7 +170,7 @@ def register(app, config):
 
             await query.message.reply_text(
                 "🏠 منوی اصلی",
-                reply_markup=main_menu(config)
+                reply_markup=_menu(config, query.from_user.id)
             )
 
         else:
@@ -197,13 +203,36 @@ def register(app, config):
             if not services:
                 await message.reply_text(
                     no_services(),
-                    reply_markup=main_menu(config)
+                    reply_markup=_menu(config, user_id)
                 )
                 return
 
+            services_map = {}
+
+            for s in services:
+                label = (
+                    f"📦 {s['name']} | {s['volume_gb']}GB"
+                )
+                services_map[label] = s["id"]
+
+            prev = user_states.get(user_id) or {}
+
+            user_states[user_id] = {
+                "step": "pick_service",
+                "services_map": services_map,
+                "order_type": "buy"
+            }
+
+            if prev.get("coupon"):
+                user_states[user_id]["coupon"] = prev["coupon"]
+                user_states[user_id]["discount"] = prev.get(
+                    "discount",
+                    0
+                )
+
             await message.reply_text(
                 "🛒 سرویس موردنظر را انتخاب کنید:",
-                reply_markup=services_keyboard(services)
+                reply_markup=services_reply_keyboard(services)
             )
 
             return
@@ -214,13 +243,31 @@ def register(app, config):
 
             if not subscriptions:
                 await message.reply_text(
-                    "❌ هنوز اشتراک فعالی ندارید."
+                    "❌ هنوز اشتراک فعالی ندارید.",
+                    reply_markup=_menu(config, user_id)
                 )
                 return
 
+            sub_map = {}
+
+            for sub in subscriptions:
+                label = (
+                    f"🔄 {sub['service_name']} | "
+                    f"@{sub['username']}"
+                )
+                sub_map[label] = sub["id"]
+
+            user_states[user_id] = {
+                "step": "pick_renew",
+                "sub_map": sub_map
+            }
+
             await message.reply_text(
                 "🔄 اشتراکی که می‌خواهید تمدید کنید را انتخاب کنید:",
-                reply_markup=renew_keyboard(subscriptions)
+                reply_markup=subscriptions_reply_keyboard(
+                    subscriptions,
+                    "🔄"
+                )
             )
 
             return
@@ -231,14 +278,30 @@ def register(app, config):
 
             if not subscriptions:
                 await message.reply_text(
-                    "📦 هنوز اشتراکی برای شما ثبت نشده."
+                    "📦 هنوز اشتراکی برای شما ثبت نشده.",
+                    reply_markup=_menu(config, user_id)
                 )
                 return
 
+            sub_map = {}
+
+            for sub in subscriptions:
+                label = (
+                    f"📦 {sub['service_name']} | "
+                    f"@{sub['username']}"
+                )
+                sub_map[label] = sub["id"]
+
+            user_states[user_id] = {
+                "step": "pick_sub",
+                "sub_map": sub_map
+            }
+
             await message.reply_text(
-                "📦 اشتراک‌های شما:",
-                reply_markup=subscriptions_keyboard(
-                    subscriptions
+                "📦 اشتراک‌های شما — یکی را انتخاب کنید:",
+                reply_markup=subscriptions_reply_keyboard(
+                    subscriptions,
+                    "📦"
                 )
             )
 
@@ -361,14 +424,25 @@ def register(app, config):
 
             if not tutorials:
                 await message.reply_text(
-                    "📚 هنوز آموزشی ثبت نشده است."
+                    "📚 هنوز آموزشی ثبت نشده است.",
+                    reply_markup=_menu(config, user_id)
                 )
                 return
+
+            tut_map = {
+                t["title"]: t["id"]
+                for t in tutorials
+            }
+
+            user_states[user_id] = {
+                "step": "pick_tutorial",
+                "tut_map": tut_map
+            }
 
             await message.reply_text(
                 "📚 آموزش اتصال و استفاده\n\n"
                 "پلتفرم موردنظر خود را انتخاب کنید:",
-                reply_markup=tutorials_keyboard(tutorials)
+                reply_markup=tutorials_reply_keyboard(tutorials)
             )
 
             return
@@ -385,6 +459,329 @@ def register(app, config):
 
             await message.reply_text(
                 "🎉 در حال حاضر جشنواره فعالی وجود ندارد."
+            )
+
+            return
+
+        # بازگشت / منوی اصلی / لغو
+        if text in ("⬅️ بازگشت", "🏠 منوی اصلی", "❌ لغو سفارش"):
+
+            user_states.pop(user_id, None)
+
+            await message.reply_text(
+                "🏠 منوی اصلی",
+                reply_markup=_menu(config, user_id)
+            )
+
+            return
+
+        # انتخاب سرویس از کیبورد پایین
+        if state and state.get("step") == "pick_service":
+
+            services_map = state.get("services_map") or {}
+
+            if text not in services_map:
+
+                await message.reply_text(
+                    "لطفاً یکی از سرویس‌های لیست را انتخاب کنید."
+                )
+
+                return
+
+            service_id = services_map[text]
+            service = get_service(service_id)
+
+            if not service:
+
+                await message.reply_text(
+                    "❌ سرویس پیدا نشد.",
+                    reply_markup=_menu(config, user_id)
+                )
+
+                user_states.pop(user_id, None)
+                return
+
+            discount = 0
+            coupon = None
+
+            saved = user_states.get(user_id) or {}
+
+            if saved.get("step") == "coupon_saved" or saved.get("coupon"):
+                # preserve coupon if was set before buy - actually pick_service overwrites state
+                pass
+
+            # اگر قبلاً کد تخفیف ذخیره شده بود از بین می‌رود چون state عوض شد؛
+            # کاربر باید اول خرید بعد کد بزند یا برعکس. برای حفظ:
+            # (اختیاری) — ساده نگه می‌داریم
+
+            new_state = {
+                "step": "username",
+                "service_id": service_id,
+                "order_type": "buy"
+            }
+
+            if state.get("coupon"):
+                new_state["coupon"] = state["coupon"]
+                new_state["discount"] = state.get("discount", 0)
+
+            user_states[user_id] = new_state
+
+            await message.reply_text(
+                f"📦 سرویس: {service['name']}\n"
+                f"💾 حجم: {service['volume_gb']}GB\n"
+                f"💰 قیمت: {format_price(service['price'])} تومان\n\n"
+                "👤 حالا نام کاربری دلخواه خود را ارسال کنید:\n"
+                "(یا «❌ لغو سفارش»)",
+                reply_markup=payment_reply_keyboard(
+                    admin(user_id, config)
+                )
+            )
+
+            return
+
+        # انتخاب اشتراک برای مشاهده
+        if state and state.get("step") == "pick_sub":
+
+            sub_map = state.get("sub_map") or {}
+
+            if text not in sub_map:
+
+                await message.reply_text(
+                    "یکی از اشتراک‌های لیست را انتخاب کنید."
+                )
+
+                return
+
+            sub = get_subscription(sub_map[text])
+
+            user_states.pop(user_id, None)
+
+            if not sub:
+
+                await message.reply_text(
+                    "❌ اشتراک پیدا نشد.",
+                    reply_markup=_menu(config, user_id)
+                )
+
+                return
+
+            text_out = (
+                f"📦 {sub['service_name']}\n"
+                f"👤 @{sub['username']}\n"
+                f"🔵 وضعیت: {sub['status']}\n"
+            )
+
+            if sub.get("subscription_url"):
+                text_out += f"\n🔗 لینک:\n{sub['subscription_url']}\n"
+
+            if sub.get("config_text"):
+                text_out += f"\n📄 کانفیگ:\n<code>{sub['config_text']}</code>"
+
+            await message.reply_text(
+                text_out,
+                reply_markup=_menu(config, user_id),
+                parse_mode="HTML"
+            )
+
+            return
+
+        # انتخاب تمدید
+        if state and state.get("step") == "pick_renew":
+
+            sub_map = state.get("sub_map") or {}
+
+            if text not in sub_map:
+
+                await message.reply_text(
+                    "یکی از موارد لیست را انتخاب کنید."
+                )
+
+                return
+
+            sub = get_subscription(sub_map[text])
+
+            if not sub:
+
+                await message.reply_text(
+                    "❌ اشتراک پیدا نشد.",
+                    reply_markup=_menu(config, user_id)
+                )
+
+                user_states.pop(user_id, None)
+                return
+
+            # پیدا کردن سرویس هم‌نام برای تمدید
+            services = get_services(True)
+            service = None
+
+            for s in services:
+                if s["name"] == sub["service_name"]:
+                    service = s
+                    break
+
+            if not service:
+                service = services[0] if services else None
+
+            if not service:
+
+                await message.reply_text(
+                    "❌ سرویسی برای تمدید فعال نیست.",
+                    reply_markup=_menu(config, user_id)
+                )
+
+                user_states.pop(user_id, None)
+                return
+
+            user_states[user_id] = {
+                "step": "confirm",
+                "service_id": service["id"],
+                "username": sub["username"],
+                "order_type": "renew",
+                "discount": 0
+            }
+
+            _, final_price = calc(service["price"], 0)
+
+            await message.reply_text(
+                order_text(
+                    service,
+                    sub["username"],
+                    0,
+                    final_price
+                ),
+                reply_markup=confirm_reply_keyboard()
+            )
+
+            return
+
+        # انتخاب آموزش
+        if state and state.get("step") == "pick_tutorial":
+
+            tut_map = state.get("tut_map") or {}
+
+            if text not in tut_map:
+
+                await message.reply_text(
+                    "یکی از آموزش‌های لیست را انتخاب کنید."
+                )
+
+                return
+
+            item = get_tutorial(tut_map[text])
+            user_states.pop(user_id, None)
+
+            if not item or not item.get("active"):
+
+                await message.reply_text(
+                    "❌ این آموزش فعال نیست.",
+                    reply_markup=_menu(config, user_id)
+                )
+
+                return
+
+            body = (item.get("body_text") or "").strip()
+
+            if body:
+                await message.reply_text(
+                    f"{item['title']}\n\n{body}",
+                    reply_markup=_menu(config, user_id)
+                )
+            else:
+                await message.reply_text(
+                    item["title"],
+                    reply_markup=_menu(config, user_id)
+                )
+
+            if item.get("file_id"):
+                try:
+                    await client.send_document(
+                        user_id,
+                        item["file_id"],
+                        caption="📎 فایل نصب / برنامه"
+                    )
+                except Exception as e:
+                    print(f"Tutorial file error: {e}")
+
+            if item.get("video_file_id"):
+                try:
+                    await client.send_video(
+                        user_id,
+                        item["video_file_id"],
+                        caption="🎬 ویدیو آموزشی"
+                    )
+                except Exception:
+                    try:
+                        await client.send_document(
+                            user_id,
+                            item["video_file_id"],
+                            caption="🎬 ویدیو آموزشی"
+                        )
+                    except Exception as e:
+                        print(f"Tutorial video error: {e}")
+
+            return
+
+        # تأیید سفارش از کیبورد پایین
+        if state and state.get("step") == "confirm":
+
+            if text == "✅ تأیید سفارش":
+
+                service = get_service(state["service_id"])
+
+                if not service:
+
+                    await message.reply_text(
+                        "❌ سرویس پیدا نشد.",
+                        reply_markup=_menu(config, user_id)
+                    )
+
+                    user_states.pop(user_id, None)
+                    return
+
+                discount = state.get("discount", 0)
+                coupon = state.get("coupon")
+
+                _, final_price = calc(
+                    service["price"],
+                    discount
+                )
+
+                order_id = create_order(
+                    user_id=user_id,
+                    service_id=service["id"],
+                    service_name=service["name"],
+                    order_type=state.get("order_type", "buy"),
+                    username=state["username"],
+                    original_price=service["price"],
+                    discount_percent=discount,
+                    final_price=final_price,
+                    coupon=coupon
+                )
+
+                user_states[user_id] = {
+                    "step": "waiting_receipt",
+                    "order_id": order_id
+                }
+
+                await message.reply_text(
+                    order_created(order_id)
+                )
+
+                await message.reply_text(
+                    payment(
+                        config.get("payment_card", "YOUR_CARD"),
+                        config.get("payment_name", "CARD_OWNER")
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=payment_reply_keyboard(
+                        admin(user_id, config)
+                    )
+                )
+
+                return
+
+            await message.reply_text(
+                "برای ادامه «✅ تأیید سفارش» یا «❌ لغو سفارش» را بزنید."
             )
 
             return
@@ -462,14 +859,14 @@ def register(app, config):
                     discount,
                     final_price
                 ),
-                reply_markup=confirm_order_keyboard()
+                reply_markup=confirm_reply_keyboard()
             )
 
             return
 
         await message.reply_text(
             "لطفاً از دکمه‌های منوی پایین استفاده کنید.",
-            reply_markup=main_menu(config)
+            reply_markup=_menu(config, user_id)
         )
 
     @app.on_callback_query(
@@ -587,7 +984,10 @@ def register(app, config):
                 config.get("payment_card", "YOUR_CARD"),
                 config.get("payment_name", "CARD_OWNER")
             ),
-            reply_markup=payment_keyboard()
+            parse_mode="HTML",
+            reply_markup=payment_reply_keyboard(
+                admin(user_id, config)
+            )
         )
 
         await query.answer()
@@ -694,7 +1094,7 @@ def register(app, config):
 
         await message.reply_text(
             receipt_received(),
-            reply_markup=main_menu(config)
+            reply_markup=_menu(config, user_id)
         )
 
     @app.on_callback_query(
@@ -736,7 +1136,7 @@ def register(app, config):
 
         await query.message.reply_text(
             text,
-            reply_markup=back_home_keyboard()
+            reply_markup=_menu(config, query.from_user.id)
         )
 
         await query.answer()
@@ -942,7 +1342,7 @@ def register(app, config):
 
         await query.message.reply_text(
             "🏠 منوی اصلی",
-            reply_markup=main_menu(config)
+            reply_markup=_menu(config, query.from_user.id)
         )
 
         await query.answer()
