@@ -38,6 +38,10 @@ from bot.database import (
     record_successful_referral,
     get_referral_count,
     get_users_page,
+    get_user,
+    get_user_orders,
+    get_user_subscriptions,
+    reset_user_info,
     get_tutorials,
     get_tutorial,
     update_tutorial_field,
@@ -422,6 +426,49 @@ def order_keyboard(order_id):
     )
 
 
+
+def user_detail_keyboard(user_id):
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🧾 سفارش‌ها",
+                    callback_data=f"admin_uorders_{user_id}"
+                ),
+                InlineKeyboardButton(
+                    "📦 اشتراک‌ها",
+                    callback_data=f"admin_usubs_{user_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "➕ افزودن اشتراک دستی",
+                    callback_data=f"admin_uaddsub_{user_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✉️ پیام به کاربر",
+                    callback_data=f"admin_msg_{user_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "♻️ ریست اطلاعات",
+                    callback_data=f"admin_ureset_{user_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⬅️ بازگشت به لیست",
+                    callback_data="admin_users"
+                )
+            ]
+        ]
+    )
+
+
+
 def buttons_keyboard(config):
     items = [
         ("buy_enabled", "🛒 خرید سرویس"),
@@ -626,7 +673,8 @@ def register(app, config):
 
             lines = [
                 "👥 کاربران\n",
-                f"تعداد کل: {count}\n"
+                f"تعداد کل: {count}\n",
+                "روی هر کاربر بزنید تا جزئیات باز شود.\n"
             ]
 
             rows = []
@@ -635,13 +683,13 @@ def register(app, config):
                 uname = u.get("username") or "—"
                 name = u.get("first_name") or "—"
                 lines.append(
-                    f"🆔 {u['id']} | @{uname} | {name}"
+                    f"🆔 <code>{u['id']}</code> | {uname} | {name}"
                 )
                 rows.append(
                     [
                         InlineKeyboardButton(
-                            f"✉️ پیام به {u['id']}",
-                            callback_data=f"admin_msg_{u['id']}"
+                            f"👤 {name} ({u['id']})",
+                            callback_data=f"admin_user_{u['id']}"
                         )
                     ]
                 )
@@ -656,7 +704,6 @@ def register(app, config):
                     ]
                 )
 
-            # تلگرام کیبورد اینلاین خالی را قبول نمی‌کند
             rows.append(
                 [
                     InlineKeyboardButton(
@@ -668,7 +715,8 @@ def register(app, config):
 
             await message.reply_text(
                 "\n".join(lines),
-                reply_markup=InlineKeyboardMarkup(rows)
+                reply_markup=InlineKeyboardMarkup(rows),
+                parse_mode=enums.ParseMode.HTML
             )
 
             raise StopPropagation
@@ -975,10 +1023,11 @@ def register(app, config):
                     "🎉 سفارش شما تأیید شد!\n\n"
                     f"🧾 سفارش: #{order_id}\n"
                     f"📦 سرویس: {order['service_name']}\n"
-                    f"👤 نام کاربری: @{order['username']}\n\n"
+                    f"👤 نام کاربری: <code>{order['username']}</code>\n\n"
                     "⚙️ کانفیگ شما:\n\n"
-                    f"{config_text}\n\n"
-                    "✅ اشتراک شما فعال شد."
+                    f"<code>{config_text}</code>\n\n"
+                    "✅ اشتراک شما فعال شد.",
+                    parse_mode=enums.ParseMode.HTML
                 )
 
             except Exception as e:
@@ -1113,6 +1162,105 @@ def register(app, config):
                     reply_markup=admin_reply_menu()
                 )
 
+            raise StopPropagation
+
+        # =====================================================
+        # پیام به کاربر
+        # =====================================================
+
+        if step == "message_user":
+
+            target_id = state.get("target_id")
+
+            admin_states.pop(user_id, None)
+
+            try:
+                await client.send_message(
+                    target_id,
+                    f"📩 پیام از مدیریت:\n\n{text}"
+                )
+                await message.reply_text(
+                    f"✅ پیام برای <code>{target_id}</code> ارسال شد.",
+                    reply_markup=admin_reply_menu(),
+                    parse_mode=enums.ParseMode.HTML
+                )
+            except Exception as e:
+                await message.reply_text(
+                    f"❌ ارسال ناموفق:\n{e}",
+                    reply_markup=admin_reply_menu()
+                )
+
+            raise StopPropagation
+
+        # =====================================================
+        # افزودن اشتراک دستی - نام سرویس
+        # =====================================================
+
+        if step == "manual_sub_service":
+
+            state["service_name"] = text
+            state["step"] = "manual_sub_username"
+
+            await message.reply_text(
+                "👤 نام کاربری اشتراک را بفرستید (بدون @):"
+            )
+            raise StopPropagation
+
+        if step == "manual_sub_username":
+
+            from bot.helpers import normalize_username, valid_username
+
+            username = normalize_username(text)
+
+            if not valid_username(username):
+                await message.reply_text(
+                    "❌ نام کاربری نامعتبر است. دوباره بفرستید:"
+                )
+                raise StopPropagation
+
+            state["username"] = username
+            state["step"] = "manual_sub_config"
+
+            await message.reply_text(
+                "⚙️ کانفیگ یا لینک اشتراک را بفرستید:"
+            )
+            raise StopPropagation
+
+        if step == "manual_sub_config":
+
+            target_id = state.get("target_id")
+            service_name = state.get("service_name")
+            username = state.get("username")
+            config_text = text
+
+            save_subscription(
+                user_id=target_id,
+                order_id=None,
+                service_name=service_name,
+                username=username,
+                subscription_url=None,
+                config_text=config_text
+            )
+
+            admin_states.pop(user_id, None)
+
+            try:
+                await client.send_message(
+                    target_id,
+                    "🎉 یک اشتراک برای شما ثبت شد.\n\n"
+                    f"📦 سرویس: {service_name}\n"
+                    f"👤 نام کاربری: <code>{username}</code>\n\n"
+                    f"⚙️ کانفیگ:\n<code>{config_text}</code>",
+                    parse_mode=enums.ParseMode.HTML
+                )
+            except Exception as e:
+                print(f"Manual sub notify error: {e}")
+
+            await message.reply_text(
+                f"✅ اشتراک دستی برای <code>{target_id}</code> ثبت شد.",
+                reply_markup=admin_reply_menu(),
+                parse_mode=enums.ParseMode.HTML
+            )
             raise StopPropagation
 
         # =====================================================
@@ -1434,7 +1582,7 @@ def register(app, config):
             f"🆔 شماره: #{order['id']}\n"
             f"👤 شناسه کاربر: {order['user_id']}\n"
             f"📦 سرویس: {order['service_name']}\n"
-            f"👤 نام کاربری: @{order['username']}\n"
+            f"👤 نام کاربری: <code>{order['username']}</code>\n"
             f"💰 قیمت اصلی: "
             f"{format_price(order['original_price'])} تومان\n"
             f"🎟️ تخفیف: {order['discount_percent']}%\n"
@@ -1446,7 +1594,8 @@ def register(app, config):
 
         await query.message.edit_text(
             text,
-            reply_markup=order_keyboard(order_id)
+            reply_markup=order_keyboard(order_id),
+            parse_mode=enums.ParseMode.HTML
         )
 
         if order.get("receipt_file_id"):
@@ -1932,7 +2081,8 @@ def register(app, config):
 
         lines = [
             "👥 کاربران\n",
-            f"تعداد کل: {count}\n"
+            f"تعداد کل: {count}\n",
+            "روی هر کاربر بزنید تا جزئیات باز شود.\n"
         ]
 
         rows = []
@@ -1941,13 +2091,13 @@ def register(app, config):
             uname = u.get("username") or "—"
             name = u.get("first_name") or "—"
             lines.append(
-                f"🆔 `{u['id']}` | @{uname} | {name}"
+                f"🆔 <code>{u['id']}</code> | {uname} | {name}"
             )
             rows.append(
                 [
                     InlineKeyboardButton(
-                        f"✉️ پیام به {u['id']}",
-                        callback_data=f"admin_msg_{u['id']}"
+                        f"👤 {name} ({u['id']})",
+                        callback_data=f"admin_user_{u['id']}"
                     )
                 ]
             )
@@ -1973,7 +2123,8 @@ def register(app, config):
 
         await query.message.edit_text(
             "\n".join(lines),
-            reply_markup=InlineKeyboardMarkup(rows)
+            reply_markup=InlineKeyboardMarkup(rows),
+            parse_mode=enums.ParseMode.HTML
         )
 
         await query.answer()
@@ -1998,7 +2149,8 @@ def register(app, config):
         lines = [
             "👥 کاربران\n",
             f"تعداد کل: {count}\n",
-            f"صفحه از {offset + 1}\n"
+            f"از ردیف {offset + 1}\n",
+            "روی هر کاربر بزنید تا جزئیات باز شود.\n"
         ]
 
         rows = []
@@ -2007,13 +2159,13 @@ def register(app, config):
             uname = u.get("username") or "—"
             name = u.get("first_name") or "—"
             lines.append(
-                f"🆔 `{u['id']}` | @{uname} | {name}"
+                f"🆔 <code>{u['id']}</code> | {uname} | {name}"
             )
             rows.append(
                 [
                     InlineKeyboardButton(
-                        f"✉️ پیام به {u['id']}",
-                        callback_data=f"admin_msg_{u['id']}"
+                        f"👤 {name} ({u['id']})",
+                        callback_data=f"admin_user_{u['id']}"
                     )
                 ]
             )
@@ -2050,9 +2202,207 @@ def register(app, config):
 
         await query.message.edit_text(
             "\n".join(lines),
-            reply_markup=InlineKeyboardMarkup(rows)
+            reply_markup=InlineKeyboardMarkup(rows),
+            parse_mode=enums.ParseMode.HTML
         )
 
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_user_\d+$")
+    )
+    async def admin_user_detail(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        target_id = int(query.data.split("_")[-1])
+        user = get_user(target_id)
+
+        if not user:
+            await query.answer("❌ کاربر پیدا نشد.", show_alert=True)
+            return
+
+        orders = get_user_orders(target_id)
+        subs = get_user_subscriptions(target_id)
+        ref_count = get_referral_count(target_id)
+
+        uname = user.get("username") or "—"
+        name = user.get("first_name") or "—"
+
+        text = (
+            "👤 جزئیات کاربر\n\n"
+            f"🆔 شناسه: <code>{target_id}</code>\n"
+            f"📛 نام: {name}\n"
+            f"🔗 یوزرنیم تلگرام: {uname}\n"
+            f"📅 عضویت: {user.get('joined_at') or '—'}\n"
+            f"👥 دعوت موفق: {ref_count}\n"
+            f"🧾 تعداد سفارش: {len(orders)}\n"
+            f"📦 تعداد اشتراک: {len(subs)}"
+        )
+
+        await query.message.edit_text(
+            text,
+            reply_markup=user_detail_keyboard(target_id),
+            parse_mode=enums.ParseMode.HTML
+        )
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_uorders_\d+$")
+    )
+    async def admin_user_orders(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        target_id = int(query.data.split("_")[-1])
+        orders = get_user_orders(target_id)
+
+        if not orders:
+            await query.message.edit_text(
+                f"🧾 سفارشی برای کاربر <code>{target_id}</code> نیست.",
+                reply_markup=user_detail_keyboard(target_id),
+                parse_mode=enums.ParseMode.HTML
+            )
+            await query.answer()
+            return
+
+        lines = [f"🧾 سفارش‌های کاربر <code>{target_id}</code>\n"]
+
+        for o in orders[:20]:
+            lines.append(
+                f"#{o['id']} | {o['service_name']} | "
+                f"<code>{o['username']}</code> | "
+                f"{format_price(o['final_price'])} | {o['status']}"
+            )
+
+        await query.message.edit_text(
+            "\n".join(lines),
+            reply_markup=user_detail_keyboard(target_id),
+            parse_mode=enums.ParseMode.HTML
+        )
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_usubs_\d+$")
+    )
+    async def admin_user_subs(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        target_id = int(query.data.split("_")[-1])
+        subs = get_user_subscriptions(target_id)
+
+        if not subs:
+            await query.message.edit_text(
+                f"📦 اشتراکی برای کاربر <code>{target_id}</code> نیست.",
+                reply_markup=user_detail_keyboard(target_id),
+                parse_mode=enums.ParseMode.HTML
+            )
+            await query.answer()
+            return
+
+        lines = [f"📦 اشتراک‌های کاربر <code>{target_id}</code>\n"]
+
+        for s in subs[:20]:
+            lines.append(
+                f"#{s['id']} | {s['service_name']} | "
+                f"<code>{s['username']}</code> | {s['status']}"
+            )
+            if s.get("config_text"):
+                lines.append(f"⚙️ <code>{s['config_text'][:80]}</code>")
+            if s.get("subscription_url"):
+                lines.append(f"🔗 {s['subscription_url']}")
+            lines.append("")
+
+        await query.message.edit_text(
+            "\n".join(lines),
+            reply_markup=user_detail_keyboard(target_id),
+            parse_mode=enums.ParseMode.HTML
+        )
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_ureset_\d+$")
+    )
+    async def admin_user_reset(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        target_id = int(query.data.split("_")[-1])
+
+        await query.message.edit_text(
+            f"♻️ ریست اطلاعات کاربر <code>{target_id}</code>\n\n"
+            "این کار اشتراک‌ها و شمارنده‌های دعوت را پاک می‌کند.\n"
+            "سفارش‌ها برای تاریخچه نگه داشته می‌شوند.\n\n"
+            "مطمئن هستید؟",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "✅ بله، ریست کن",
+                            callback_data=f"admin_uresetok_{target_id}"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "❌ انصراف",
+                            callback_data=f"admin_user_{target_id}"
+                        )
+                    ]
+                ]
+            ),
+            parse_mode=enums.ParseMode.HTML
+        )
+        await query.answer()
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_uresetok_\d+$")
+    )
+    async def admin_user_reset_ok(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        target_id = int(query.data.split("_")[-1])
+        reset_user_info(target_id)
+
+        await query.message.edit_text(
+            f"✅ اطلاعات کاربر <code>{target_id}</code> ریست شد.",
+            reply_markup=user_detail_keyboard(target_id),
+            parse_mode=enums.ParseMode.HTML
+        )
+        await query.answer("ریست شد.")
+
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_uaddsub_\d+$")
+    )
+    async def admin_user_addsub(client, query):
+
+        if not admin(query.from_user.id, config):
+            return
+
+        target_id = int(query.data.split("_")[-1])
+
+        admin_states[query.from_user.id] = {
+            "step": "manual_sub_service",
+            "target_id": target_id
+        }
+
+        await query.message.reply_text(
+            f"➕ افزودن اشتراک دستی برای <code>{target_id}</code>\n\n"
+            "📦 نام سرویس را بفرستید:",
+            parse_mode=enums.ParseMode.HTML
+        )
         await query.answer()
 
 
@@ -2075,10 +2425,12 @@ def register(app, config):
         }
 
         await query.message.reply_text(
-            f"✉️ پیام خود را برای کاربر `{target_id}` بنویسید:"
+            f"✉️ پیام خود را برای کاربر <code>{target_id}</code> بنویسید:",
+            parse_mode=enums.ParseMode.HTML
         )
 
         await query.answer()
+
 
     # =========================================================
     # آمار
