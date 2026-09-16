@@ -240,35 +240,15 @@ def register(app, config):
 
         if text == "🔄 تمدید":
 
-            subscriptions = get_user_subscriptions(user_id)
-
-            if not subscriptions:
-                await message.reply_text(
-                    "❌ هنوز اشتراک فعالی ندارید.",
-                    reply_markup=_menu(config, user_id)
-                )
-                return
-
-            sub_map = {}
-
-            for sub in subscriptions:
-                label = (
-                    f"🔄 {sub['service_name']} | "
-                    f"@{sub['username']}"
-                )
-                sub_map[label] = sub["id"]
-
             user_states[user_id] = {
-                "step": "pick_renew",
-                "sub_map": sub_map
+                "step": "renew_username",
+                "order_type": "renew"
             }
 
             await message.reply_text(
-                "🔄 اشتراکی که می‌خواهید تمدید کنید را انتخاب کنید:",
-                reply_markup=subscriptions_reply_keyboard(
-                    subscriptions,
-                    "🔄"
-                )
+                "🔄 تمدید سرویس\n\n"
+                "👤 نام کاربری قبلی که موقع خرید استفاده کرده‌اید را بفرستید:\n"
+                "(بدون @)"
             )
 
             return
@@ -289,7 +269,7 @@ def register(app, config):
             for sub in subscriptions:
                 label = (
                     f"📦 {sub['service_name']} | "
-                    f"@{sub['username']}"
+                    f"{sub['username']}"
                 )
                 sub_map[label] = sub["id"]
 
@@ -323,7 +303,7 @@ def register(app, config):
             for sub in subscriptions:
                 lines.append(
                     f"📦 {sub['service_name']}\n"
-                    f"👤 @{sub['username']}\n"
+                    f"👤 {sub['username']}\n"
                     f"🔵 وضعیت: {sub['status']}\n"
                 )
 
@@ -402,8 +382,7 @@ def register(app, config):
             await message.reply_text(
                 "👤 حساب شما\n\n"
                 f"🆔 شناسه: {user_id}\n"
-                f"👤 نام کاربری: "
-                f"@{user.get('username') or 'ندارد'}\n"
+                f"👤 نام کاربری: {user.get('username') or 'ندارد'}\n"
                 f"📅 عضویت: {user.get('joined_at')}"
             )
 
@@ -541,12 +520,33 @@ def register(app, config):
             new_state = {
                 "step": "username",
                 "service_id": service_id,
-                "order_type": "buy"
+                "order_type": state.get("order_type", "buy")
             }
 
             if state.get("coupon"):
                 new_state["coupon"] = state["coupon"]
                 new_state["discount"] = state.get("discount", 0)
+
+            # اگر از تمدید آمده و نام کاربری از قبل هست، مستقیم برو تأیید
+            if state.get("username") and state.get("order_type") == "renew":
+                new_state["username"] = state["username"]
+                new_state["step"] = "confirm"
+
+                discount = new_state.get("discount", 0)
+                _, final_price = calc(service["price"], discount)
+
+                user_states[user_id] = new_state
+
+                await message.reply_text(
+                    order_text(
+                        service,
+                        new_state["username"],
+                        discount,
+                        final_price
+                    ),
+                    reply_markup=confirm_reply_keyboard()
+                )
+                return
 
             user_states[user_id] = new_state
 
@@ -555,7 +555,7 @@ def register(app, config):
                 f"💾 حجم: {service['volume_gb']}GB\n"
                 f"💰 قیمت: {format_price(service['price'])} تومان\n\n"
                 "👤 حالا نام کاربری دلخواه خود را ارسال کنید:\n"
-                "(یا «❌ لغو سفارش»)",
+                "(بدون @ — یا «❌ لغو سفارش»)",
                 reply_markup=payment_reply_keyboard(
                     admin(user_id, config)
                 )
@@ -591,7 +591,7 @@ def register(app, config):
 
             text_out = (
                 f"📦 {sub['service_name']}\n"
-                f"👤 @{sub['username']}\n"
+                f"👤 {sub['username']}\n"
                 f"🔵 وضعیت: {sub['status']}\n"
             )
 
@@ -609,73 +609,50 @@ def register(app, config):
 
             return
 
-        # انتخاب تمدید
-        if state and state.get("step") == "pick_renew":
+        # تمدید: دریافت نام کاربری قبلی
+        if state and state.get("step") == "renew_username":
 
-            sub_map = state.get("sub_map") or {}
+            username = normalize_username(text)
 
-            if text not in sub_map:
-
+            if not valid_username(username):
                 await message.reply_text(
-                    "یکی از موارد لیست را انتخاب کنید."
+                    "❌ نام کاربری نامعتبر است.\n\n"
+                    "فقط حروف انگلیسی، عدد و _ مجاز است.\n"
+                    "حداقل ۳ و حداکثر ۳۲ کاراکتر.\n"
+                    "(بدون @)"
                 )
-
                 return
 
-            sub = get_subscription(sub_map[text])
-
-            if not sub:
-
-                await message.reply_text(
-                    "❌ اشتراک پیدا نشد.",
-                    reply_markup=_menu(config, user_id)
-                )
-
-                user_states.pop(user_id, None)
-                return
-
-            # پیدا کردن سرویس هم‌نام برای تمدید
             services = get_services(True)
-            service = None
 
-            for s in services:
-                if s["name"] == sub["service_name"]:
-                    service = s
-                    break
-
-            if not service:
-                service = services[0] if services else None
-
-            if not service:
-
+            if not services:
                 await message.reply_text(
-                    "❌ سرویسی برای تمدید فعال نیست.",
+                    no_services(),
                     reply_markup=_menu(config, user_id)
                 )
-
                 user_states.pop(user_id, None)
                 return
+
+            services_map = {}
+            for s in services:
+                label = (
+                    f"📦 {s['name']} | {s['volume_gb']}GB"
+                )
+                services_map[label] = s["id"]
 
             user_states[user_id] = {
-                "step": "confirm",
-                "service_id": service["id"],
-                "username": sub["username"],
+                "step": "pick_service",
                 "order_type": "renew",
+                "username": username,
+                "services_map": services_map,
                 "discount": 0
             }
 
-            _, final_price = calc(service["price"], 0)
-
             await message.reply_text(
-                order_text(
-                    service,
-                    sub["username"],
-                    0,
-                    final_price
-                ),
-                reply_markup=confirm_order_keyboard()
+                f"✅ نام کاربری: {username}\n\n"
+                "📦 سرویس موردنظر برای تمدید را انتخاب کنید:",
+                reply_markup=services_reply_keyboard(services)
             )
-
             return
 
         # انتخاب آموزش
@@ -1093,9 +1070,9 @@ def register(app, config):
                     caption=(
                         "🧾 رسید پرداخت جدید\n\n"
                         f"🆔 شماره سفارش: #{order['id']}\n"
-                        f"👤 شناسه کاربر: {user_id}\n"
+                        f"👤 شناسه کاربر: <code>{user_id}</code>\n"
                         f"📦 سرویس: {order['service_name']}\n"
-                        f"👤 نام کاربری: @{order['username']}\n"
+                        f"👤 نام کاربری: <code>{order['username']}</code>\n"
                         f"💰 قیمت اصلی: "
                         f"{format_price(order['original_price'])} تومان\n"
                         f"🎟️ تخفیف: {order['discount_percent']}%\n"
@@ -1104,6 +1081,7 @@ def register(app, config):
                         f"🔵 وضعیت: {order['status']}\n"
                         f"📅 تاریخ: {order['created_at']}"
                     ),
+                    parse_mode=enums.ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup(
                         [
                             [
@@ -1157,7 +1135,7 @@ def register(app, config):
         text = (
             "📦 اطلاعات اشتراک\n\n"
             f"📦 سرویس: {sub['service_name']}\n"
-            f"👤 نام کاربری: @{sub['username']}\n"
+            f"👤 نام کاربری: {sub['username']}\n"
             f"🔵 وضعیت: {sub['status']}\n"
         )
 
@@ -1229,7 +1207,7 @@ def register(app, config):
             "🔄 تمدید اشتراک\n\n"
             f"📦 سرویس: {service['name']}\n"
             f"💾 حجم: {service['volume_gb']}GB\n"
-            f"👤 نام کاربری: @{sub['username']}\n"
+            f"👤 نام کاربری: {sub['username']}\n"
             f"💰 مبلغ: {format_price(service['price'])} تومان\n\n"
             "برای ادامه تأیید کنید:",
             reply_markup=InlineKeyboardMarkup(
