@@ -7,6 +7,7 @@ from pyrogram import Client
 from bot.database import init_db
 from bot.user_handlers import register as register_users
 from bot.admin_handlers import register as register_admin
+from bot.backup import auto_backup_loop
 
 
 def load_config():
@@ -88,6 +89,11 @@ async def main():
 
     print(
         "Cafe Hermes Bot started successfully."
+    )
+
+    # بکاپ خودکار هر ۲۴ ساعت (قابل تنظیم در config)
+    asyncio.create_task(
+        auto_backup_loop(app, config)
     )
 
     try:
