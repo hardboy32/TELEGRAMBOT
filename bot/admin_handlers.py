@@ -25,6 +25,8 @@ from bot.database import (
     add_service,
     get_services,
     toggle_service,
+    update_service,
+    delete_service,
     get_users_count,
     get_orders_count,
     get_all_user_ids,
@@ -345,6 +347,49 @@ def service_admin_keyboard(services):
     )
 
     return InlineKeyboardMarkup(rows)
+
+
+def service_detail_keyboard(service_id):
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✏️ ویرایش نام",
+                    callback_data=f"svc_edit_name_{service_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "💾 ویرایش حجم",
+                    callback_data=f"svc_edit_vol_{service_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "💰 ویرایش قیمت",
+                    callback_data=f"svc_edit_price_{service_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔄 فعال / غیرفعال",
+                    callback_data=f"svc_toggle_{service_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🗑 حذف سرویس",
+                    callback_data=f"svc_del_{service_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⬅️ بازگشت به لیست",
+                    callback_data="admin_services"
+                )
+            ]
+        ]
+    )
 
 
 def order_keyboard(order_id):
@@ -1153,6 +1198,105 @@ def register(app, config):
 
             raise StopPropagation
 
+        # 
+        if step == "svc_edit_name":
+
+            name = text.strip()
+
+            if len(name) < 2:
+
+                await message.reply_text(
+                    "❌ نام خیلی کوتاه است."
+                )
+
+                raise StopPropagation
+
+            update_service(
+                state["service_id"],
+                name=name
+            )
+
+            admin_states.pop(user_id, None)
+
+            await message.reply_text(
+                f"✅ نام سرویس به «{name}» تغییر کرد.",
+                reply_markup=admin_reply_menu()
+            )
+
+            raise StopPropagation
+
+        if step == "svc_edit_vol":
+
+            try:
+                volume = int(text.strip())
+            except ValueError:
+
+                await message.reply_text(
+                    "❌ یک عدد معتبر بفرست."
+                )
+
+                raise StopPropagation
+
+            if volume <= 0:
+
+                await message.reply_text(
+                    "❌ حجم باید بزرگ‌تر از صفر باشد."
+                )
+
+                raise StopPropagation
+
+            update_service(
+                state["service_id"],
+                volume_gb=volume
+            )
+
+            admin_states.pop(user_id, None)
+
+            await message.reply_text(
+                f"✅ حجم سرویس به {volume}GB تغییر کرد.",
+                reply_markup=admin_reply_menu()
+            )
+
+            raise StopPropagation
+
+        if step == "svc_edit_price":
+
+            try:
+                price = int(
+                    text.strip()
+                    .replace(",", "")
+                    .replace("،", "")
+                )
+            except ValueError:
+
+                await message.reply_text(
+                    "❌ یک عدد معتبر بفرست."
+                )
+
+                raise StopPropagation
+
+            if price < 0:
+
+                await message.reply_text(
+                    "❌ قیمت نامعتبر است."
+                )
+
+                raise StopPropagation
+
+            update_service(
+                state["service_id"],
+                price=price
+            )
+
+            admin_states.pop(user_id, None)
+
+            await message.reply_text(
+                f"✅ قیمت به {format_price(price)} تومان تغییر کرد.",
+                reply_markup=admin_reply_menu()
+            )
+
+            raise StopPropagation
+
         # اگر حالت مدیریتی ناشناخته بود
         admin_states.pop(
             user_id,
@@ -1528,6 +1672,54 @@ def register(app, config):
     @app.on_callback_query(
         filters.regex(r"^admin_service_\d+$")
     )
+    async def admin_service_detail(client, query):
+
+        if not admin(
+            query.from_user.id,
+            config
+        ):
+            return
+
+        service_id = int(
+            query.data.split("_")[-1]
+        )
+
+        service = get_service(service_id)
+
+        if not service:
+
+            await query.answer(
+                "❌ سرویس پیدا نشد.",
+                show_alert=True
+            )
+            return
+
+        status = (
+            "🟢 فعال"
+            if service["active"]
+            else "🔴 غیرفعال"
+        )
+
+        await query.message.edit_text(
+            f"📦 {service['name']}\n\n"
+            f"💾 حجم: {service['volume_gb']}GB\n"
+            f"💰 قیمت: {format_price(service['price'])} تومان\n"
+            f"وضعیت: {status}\n\n"
+            "چه کاری می‌خواهید انجام دهید؟",
+            reply_markup=service_detail_keyboard(
+                service_id
+            )
+        )
+
+        await query.answer()
+
+    # =========================================================
+    # فعال/غیرفعال سرویس
+    # =========================================================
+
+    @app.on_callback_query(
+        filters.regex(r"^svc_toggle_\d+$")
+    )
     async def admin_service_toggle(client, query):
 
         if not admin(
@@ -1540,16 +1732,22 @@ def register(app, config):
             query.data.split("_")[-1]
         )
 
-        new_state = toggle_service(
-            service_id
+        new_state = toggle_service(service_id)
+        service = get_service(service_id)
+
+        status = (
+            "🟢 فعال"
+            if service["active"]
+            else "🔴 غیرفعال"
         )
 
-        services = get_services(False)
-
         await query.message.edit_text(
-            "📦 مدیریت سرویس‌ها",
-            reply_markup=service_admin_keyboard(
-                services
+            f"📦 {service['name']}\n\n"
+            f"💾 حجم: {service['volume_gb']}GB\n"
+            f"💰 قیمت: {format_price(service['price'])} تومان\n"
+            f"وضعیت: {status}",
+            reply_markup=service_detail_keyboard(
+                service_id
             )
         )
 
@@ -1558,6 +1756,131 @@ def register(app, config):
             if new_state
             else "🔴 سرویس غیرفعال شد."
         )
+
+    # =========================================================
+    # ویرایش نام
+    # =========================================================
+
+    @app.on_callback_query(
+        filters.regex(r"^svc_edit_name_\d+$")
+    )
+    async def svc_edit_name(client, query):
+
+        if not admin(
+            query.from_user.id,
+            config
+        ):
+            return
+
+        service_id = int(
+            query.data.split("_")[-1]
+        )
+
+        admin_states[query.from_user.id] = {
+            "step": "svc_edit_name",
+            "service_id": service_id
+        }
+
+        await query.message.reply_text(
+            "✏️ نام جدید سرویس را بفرست:"
+        )
+
+        await query.answer()
+
+    # =========================================================
+    # ویرایش حجم
+    # =========================================================
+
+    @app.on_callback_query(
+        filters.regex(r"^svc_edit_vol_\d+$")
+    )
+    async def svc_edit_vol(client, query):
+
+        if not admin(
+            query.from_user.id,
+            config
+        ):
+            return
+
+        service_id = int(
+            query.data.split("_")[-1]
+        )
+
+        admin_states[query.from_user.id] = {
+            "step": "svc_edit_vol",
+            "service_id": service_id
+        }
+
+        await query.message.reply_text(
+            "💾 حجم جدید را به GB (عدد) بفرست:"
+        )
+
+        await query.answer()
+
+    # =========================================================
+    # ویرایش قیمت
+    # =========================================================
+
+    @app.on_callback_query(
+        filters.regex(r"^svc_edit_price_\d+$")
+    )
+    async def svc_edit_price(client, query):
+
+        if not admin(
+            query.from_user.id,
+            config
+        ):
+            return
+
+        service_id = int(
+            query.data.split("_")[-1]
+        )
+
+        admin_states[query.from_user.id] = {
+            "step": "svc_edit_price",
+            "service_id": service_id
+        }
+
+        await query.message.reply_text(
+            "💰 قیمت جدید را به تومان (عدد) بفرست:"
+        )
+
+        await query.answer()
+
+    # =========================================================
+    # حذف سرویس
+    # =========================================================
+
+    @app.on_callback_query(
+        filters.regex(r"^svc_del_\d+$")
+    )
+    async def svc_del(client, query):
+
+        if not admin(
+            query.from_user.id,
+            config
+        ):
+            return
+
+        service_id = int(
+            query.data.split("_")[-1]
+        )
+
+        delete_service(service_id)
+
+        services = get_services(False)
+
+        await query.message.edit_text(
+            "📦 مدیریت سرویس‌ها\n\n"
+            "✅ سرویس حذف شد.",
+            reply_markup=service_admin_keyboard(
+                services
+            )
+        )
+
+        await query.answer("حذف شد.")
+
+
 
     # =========================================================
     # افزودن سرویس
