@@ -626,6 +626,85 @@ def update_subscription_status(subscription_id, status):
     conn.close()
 
 
+
+
+def delete_order(order_id):
+    conn = get_connection()
+    conn.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def update_order_status(order_id, status):
+    conn = get_connection()
+    if status == "approved":
+        conn.execute(
+            "UPDATE orders SET status = ?, approved_at = ? WHERE id = ?",
+            (status, now(), order_id)
+        )
+    else:
+        conn.execute(
+            "UPDATE orders SET status = ? WHERE id = ?",
+            (status, order_id)
+        )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def delete_subscription(subscription_id):
+    conn = get_connection()
+    conn.execute(
+        "DELETE FROM subscriptions WHERE id = ?",
+        (subscription_id,)
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def update_subscription_fields(
+    subscription_id,
+    service_name=None,
+    username=None,
+    config_text=None,
+    subscription_url=None,
+    status=None
+):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM subscriptions WHERE id = ?",
+        (subscription_id,)
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        return False
+
+    s = dict(row)
+    conn.execute("""
+        UPDATE subscriptions
+        SET service_name = ?,
+            username = ?,
+            config_text = ?,
+            subscription_url = ?,
+            status = ?,
+            updated_at = ?
+        WHERE id = ?
+    """, (
+        service_name if service_name is not None else s["service_name"],
+        username if username is not None else s["username"],
+        config_text if config_text is not None else s["config_text"],
+        subscription_url if subscription_url is not None else s["subscription_url"],
+        status if status is not None else s["status"],
+        now(),
+        subscription_id
+    ))
+    conn.commit()
+    conn.close()
+    return True
+
 def create_coupon(
     code,
     percent,
