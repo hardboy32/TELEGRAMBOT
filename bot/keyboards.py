@@ -6,7 +6,7 @@ from pyrogram.types import (
 )
 
 
-def main_menu(config):
+def main_menu(config, is_admin=False):
     buttons = []
 
     if config.get("buy_enabled", True):
@@ -38,6 +38,9 @@ def main_menu(config):
 
     if config.get("tutorial_enabled", True):
         buttons.append(KeyboardButton("📚 آموزش"))
+
+    if is_admin:
+        buttons.append(KeyboardButton("⚙️ پنل مدیریت"))
 
     if config.get("free_test_enabled", False):
         buttons.append(KeyboardButton("🎁 تست رایگان"))
