@@ -184,3 +184,29 @@ def back_home_keyboard():
             ]
         ]
     )
+
+
+
+def tutorials_keyboard(tutorials):
+    rows = []
+
+    for item in tutorials:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    item["title"],
+                    callback_data=f"tutorial_{item['id']}"
+                )
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                "🏠 منوی اصلی",
+                callback_data="user_home"
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(rows)
