@@ -337,6 +337,51 @@ def toggle_service(service_id):
     return bool(new_value)
 
 
+
+def update_service(service_id, name=None, volume_gb=None, price=None):
+    conn = get_connection()
+
+    row = conn.execute(
+        "SELECT * FROM services WHERE id = ?",
+        (service_id,)
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        return False
+
+    service = dict(row)
+
+    new_name = name if name is not None else service["name"]
+    new_volume = volume_gb if volume_gb is not None else service["volume_gb"]
+    new_price = price if price is not None else service["price"]
+
+    conn.execute("""
+        UPDATE services
+        SET name = ?, volume_gb = ?, price = ?
+        WHERE id = ?
+    """, (new_name, new_volume, new_price, service_id))
+
+    conn.commit()
+    conn.close()
+
+    return True
+
+
+def delete_service(service_id):
+    conn = get_connection()
+
+    conn.execute(
+        "DELETE FROM services WHERE id = ?",
+        (service_id,)
+    )
+
+    conn.commit()
+    conn.close()
+
+    return True
+
+
 def create_order(
     user_id,
     service_id,
