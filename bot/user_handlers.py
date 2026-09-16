@@ -1,4 +1,4 @@
-from pyrogram import filters
+from pyrogram import filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.database import (
@@ -603,7 +603,7 @@ def register(app, config):
             await message.reply_text(
                 text_out,
                 reply_markup=_menu(config, user_id),
-                parse_mode="HTML"
+                parse_mode=enums.ParseMode.HTML
             )
 
             return
@@ -795,7 +795,7 @@ def register(app, config):
                         config.get("payment_card", "YOUR_CARD"),
                         config.get("payment_name", "CARD_OWNER")
                     ),
-                    parse_mode="HTML",
+                    parse_mode=enums.ParseMode.HTML,
                     reply_markup=payment_reply_keyboard(
                         admin(user_id, config)
                     )
@@ -1007,7 +1007,7 @@ def register(app, config):
                 config.get("payment_card", "YOUR_CARD"),
                 config.get("payment_name", "CARD_OWNER")
             ),
-            parse_mode="HTML",
+            parse_mode=enums.ParseMode.HTML,
             reply_markup=payment_reply_keyboard(
                 admin(user_id, config)
             )
