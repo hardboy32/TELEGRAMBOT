@@ -1092,19 +1092,34 @@ def register(app, config):
                     message.photo.file_id,
                     caption=(
                         "🧾 رسید پرداخت جدید\n\n"
-                        f"شماره سفارش: #{order['id']}\n"
-                        f"👤 کاربر: {user_id}\n"
+                        f"🆔 شماره سفارش: #{order['id']}\n"
+                        f"👤 شناسه کاربر: {user_id}\n"
                         f"📦 سرویس: {order['service_name']}\n"
                         f"👤 نام کاربری: @{order['username']}\n"
-                        f"💰 مبلغ: "
-                        f"{format_price(order['final_price'])} تومان"
+                        f"💰 قیمت اصلی: "
+                        f"{format_price(order['original_price'])} تومان\n"
+                        f"🎟️ تخفیف: {order['discount_percent']}%\n"
+                        f"💵 مبلغ نهایی: "
+                        f"{format_price(order['final_price'])} تومان\n"
+                        f"🔵 وضعیت: {order['status']}\n"
+                        f"📅 تاریخ: {order['created_at']}"
                     ),
                     reply_markup=InlineKeyboardMarkup(
                         [
                             [
                                 InlineKeyboardButton(
-                                    "🔎 بررسی سفارش",
-                                    callback_data=f"admin_order_{order['id']}"
+                                    "✅ تأیید پرداخت",
+                                    callback_data=f"admin_approve_{order['id']}"
+                                ),
+                                InlineKeyboardButton(
+                                    "❌ رد پرداخت",
+                                    callback_data=f"admin_reject_{order['id']}"
+                                )
+                            ],
+                            [
+                                InlineKeyboardButton(
+                                    "⚙️ ثبت کانفیگ",
+                                    callback_data=f"admin_config_{order['id']}"
                                 )
                             ]
                         ]
