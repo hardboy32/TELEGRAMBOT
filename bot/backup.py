@@ -287,3 +287,67 @@ def restore_backup(zip_path, config):
 
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def auto_backup_loop(app, config):
+    """
+    هر N ساعت یک بکاپ می‌سازد و برای همه ادمین‌ها ارسال می‌کند.
+    """
+    import asyncio
+
+    enabled = config.get("auto_backup_enabled", True)
+
+    if not enabled:
+        print("Auto backup is disabled.")
+        return
+
+    try:
+        hours = float(config.get("auto_backup_hours", 24))
+    except (TypeError, ValueError):
+        hours = 24
+
+    if hours < 1:
+        hours = 1
+
+    interval = int(hours * 3600)
+
+    print(
+        f"Auto backup enabled. Interval: {hours} hour(s)."
+    )
+
+    while True:
+
+        await asyncio.sleep(interval)
+
+        try:
+
+            zip_path = create_backup(config)
+
+            caption = (
+                "💾 بکاپ خودکار کافه هرمس\n\n"
+                "این فایل به‌صورت خودکار ساخته شده است.\n"
+                "حتماً در Saved Messages ذخیره کنید."
+            )
+
+            for admin_id in config.get("admin_ids", []):
+
+                try:
+
+                    await app.send_document(
+                        int(admin_id),
+                        zip_path,
+                        caption=caption
+                    )
+
+                except Exception as e:
+
+                    print(
+                        f"Auto backup send failed "
+                        f"for {admin_id}: {e}"
+                    )
+
+            print("Auto backup sent successfully.")
+
+        except Exception as e:
+
+            print(f"Auto backup error: {e}")
