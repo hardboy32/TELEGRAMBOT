@@ -23,6 +23,7 @@
   "tutorial_enabled": true,
   "free_test_enabled": false,
   "festival_enabled": false,
+  "support_username": "@hermes_vpn1",
   "auto_backup_enabled": true,
   "auto_backup_hours": 1,
   "auto_backup_user_id": 1706395698
