@@ -1,4 +1,12 @@
 from decimal import Decimal, ROUND_DOWN
+import json
+
+
+SECRET_CONFIG_KEYS = (
+    "api_id",
+    "api_hash",
+    "bot_token"
+)
 
 
 def calc(price, percent):
@@ -80,3 +88,32 @@ def mask_card(card):
         return card
 
     return f"{card[:4]} **** **** {card[-4:]}"
+
+
+def save_config(config, path="config.json"):
+    data = {}
+
+    for key, value in config.items():
+        if key in SECRET_CONFIG_KEYS:
+            continue
+
+        data[key] = value
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(
+            data,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
+
+
+def apply_restored_config(config, path="config.json"):
+    with open(path, "r", encoding="utf-8") as f:
+        restored = json.load(f)
+
+    for key, value in restored.items():
+        if key in SECRET_CONFIG_KEYS:
+            continue
+
+        config[key] = value
