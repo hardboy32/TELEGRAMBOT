@@ -1,5 +1,5 @@
 import os
-from pyrogram import filters, StopPropagation
+from pyrogram import filters, StopPropagation, enums
 from pyrogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
@@ -589,7 +589,7 @@ def register(app, config):
                 uname = u.get("username") or "—"
                 name = u.get("first_name") or "—"
                 lines.append(
-                    f"🆔 `{u['id']}` | @{uname} | {name}"
+                    f"🆔 {u['id']} | @{uname} | {name}"
                 )
                 rows.append(
                     [
@@ -610,12 +610,23 @@ def register(app, config):
                     ]
                 )
 
+            # تلگرام کیبورد اینلاین خالی را قبول نمی‌کند
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        "⬅️ بازگشت",
+                        callback_data="admin_home"
+                    )
+                ]
+            )
+
             await message.reply_text(
                 "\n".join(lines),
                 reply_markup=InlineKeyboardMarkup(rows)
             )
 
             raise StopPropagation
+
 
         if text == "📊 آمار":
 
