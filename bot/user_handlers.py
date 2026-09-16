@@ -410,10 +410,33 @@ def register(app, config):
 
         if text == "☎️ پشتیبانی":
 
+            support = config.get(
+                "support_username",
+                "@hermes_vpn1"
+            )
+
+            support = str(support).strip()
+
+            if not support.startswith("@"):
+                support = f"@{support}"
+
+            username = support.replace("@", "")
+
             await message.reply_text(
                 "☎️ پشتیبانی\n\n"
-                "برای ارتباط با پشتیبانی، "
-                "پیام خود را همینجا ارسال کنید."
+                "برای ارتباط مستقیم با پشتیبانی "
+                "روی دکمه زیر بزنید:\n"
+                f"👤 {support}",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "💬 چت با پشتیبانی",
+                                url=f"https://t.me/{username}"
+                            )
+                        ]
+                    ]
+                )
             )
 
             return
