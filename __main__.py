@@ -5,10 +5,8 @@ import os
 from pyrogram import Client
 
 from bot.database import init_db
-
 from bot.user_handlers import register as register_users
 from bot.admin_handlers import register as register_admin
-
 from bot.backup import auto_backup_loop
 
 from bot.remote_storage import (
@@ -124,7 +122,6 @@ async def main():
         "Cafe Hermes Bot started successfully."
     )
 
-    # اولین ذخیره بعد از بالا آمدن ربات
     if storage_started:
 
         try:
