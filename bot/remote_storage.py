@@ -14,6 +14,8 @@ STORAGE_CHAT_ID = os.getenv("STORAGE_CHAT_ID")
 _storage_app = None
 _storage_started = False
 _storage_chat = None
+_storage_ready_event = None
+_storage_observer_registered = False
 
 _sync_task = None
 _sync_lock = asyncio.Lock()
@@ -22,6 +24,8 @@ _dirty = False
 _last_db_mtime = None
 _last_config_mtime = None
 _watcher_task = None
+
+_last_remote_message_ids = {}
 
 
 def storage_enabled():
@@ -33,6 +37,52 @@ def _mtime(path):
         return os.path.getmtime(path)
     except OSError:
         return None
+
+
+async def _connect_from_channel_message(message):
+    global _storage_chat
+    global _storage_started
+
+    if not STORAGE_CHAT_ID:
+        return
+
+    try:
+        target_id = int(STORAGE_CHAT_ID)
+    except (TypeError, ValueError):
+        return
+
+    if not message or not message.chat:
+        return
+
+    if message.chat.id != target_id:
+        return
+
+    _storage_chat = message.chat
+    _storage_started = True
+
+    print(
+        "Remote Storage: storage channel detected from a new channel post: "
+        f"{_storage_chat.id}"
+    )
+
+    if _storage_ready_event and not _storage_ready_event.is_set():
+        _storage_ready_event.set()
+
+
+async def _register_storage_observer(app):
+    global _storage_ready_event
+    global _storage_observer_registered
+
+    if _storage_observer_registered:
+        return
+
+    _storage_ready_event = asyncio.Event()
+
+    @app.on_message(filters.channel, group=-1000)
+    async def _storage_channel_observer(client, message):
+        await _connect_from_channel_message(message)
+
+    _storage_observer_registered = True
 
 
 async def start_storage(app):
@@ -50,55 +100,54 @@ async def start_storage(app):
 
     try:
         target_id = int(STORAGE_CHAT_ID)
-
     except (TypeError, ValueError):
-
         print(
             "Remote Storage: STORAGE_CHAT_ID is invalid."
         )
-
         return False
 
     try:
         print(
-            "Remote Storage: finding storage channel..."
+            "Remote Storage: connecting to storage channel..."
         )
 
-        # First try the normal cached peer.
+        # Pyrogram bot accounts cannot use get_dialogs() here.
+        # First try the explicit chat ID in case the peer is already known.
         try:
-            _storage_chat = await _storage_app.get_chat(
-                target_id
+            _storage_chat = await _storage_app.get_chat(target_id)
+        except Exception as e:
+            print(
+                f"Remote Storage: direct channel lookup unavailable: {e}"
             )
-
-        except Exception:
             _storage_chat = None
 
-        # If the peer is not cached yet, inspect dialogs.
         if _storage_chat is None:
-
-            async for dialog in _storage_app.get_dialogs():
-
-                if not dialog.chat:
-                    continue
-
-                if dialog.chat.id == target_id:
-
-                    _storage_chat = dialog.chat
-                    break
-
-        if _storage_chat is None:
+            await _register_storage_observer(_storage_app)
 
             print(
-                "Remote Storage: channel was not found "
-                "in bot dialogs."
+                "Remote Storage: waiting for a new post from the storage channel..."
             )
-
             print(
-                "Make sure the bot is an admin of the "
-                "private channel and send one new message "
-                "inside that channel."
+                "Send any new message in the private storage channel while the bot is starting."
             )
 
+            try:
+                await asyncio.wait_for(
+                    _storage_ready_event.wait(),
+                    timeout=30
+                )
+            except asyncio.TimeoutError:
+                print(
+                    "Remote Storage: storage channel was not detected within 30 seconds."
+                )
+                _storage_started = False
+                return False
+
+        if _storage_chat is None or _storage_chat.id != target_id:
+            print(
+                "Remote Storage: storage channel could not be confirmed."
+            )
+            _storage_started = False
             return False
 
         _storage_started = True
@@ -111,14 +160,11 @@ async def start_storage(app):
         return True
 
     except Exception as e:
-
         print(
             f"Remote Storage connection error: {e}"
         )
-
         _storage_started = False
         _storage_chat = None
-
         return False
 
 
@@ -129,28 +175,23 @@ async def stop_storage():
     global _sync_task
     global _watcher_task
     global _dirty
+    global _last_remote_message_ids
 
     if _watcher_task:
-
         try:
             _watcher_task.cancel()
             await _watcher_task
-
         except asyncio.CancelledError:
             pass
-
         except Exception:
             pass
 
     if _sync_task:
-
         try:
             _sync_task.cancel()
             await _sync_task
-
         except asyncio.CancelledError:
             pass
-
         except Exception:
             pass
 
@@ -160,42 +201,30 @@ async def stop_storage():
     _storage_chat = None
     _storage_started = False
     _dirty = False
+    _last_remote_message_ids = {}
 
 
 def _chat_id():
     if _storage_chat:
         return _storage_chat.id
-
     return int(STORAGE_CHAT_ID)
 
 
 async def _find_latest(marker):
-    if not _storage_started:
+    if not _storage_started or not _storage_app or not _storage_chat:
         return None
 
     latest = None
 
     try:
-
-        async for message in _storage_app.get_chat_history(
-            _chat_id()
-        ):
-
-            text = ""
-
-            if message.caption:
-                text = message.caption
-
-            elif message.text:
-                text = message.text
+        async for message in _storage_app.get_chat_history(_storage_chat.id):
+            text = message.caption or message.text or ""
 
             if text.startswith(marker):
-
                 latest = message
                 break
 
     except Exception as e:
-
         print(
             f"Remote history error: {e}"
         )
@@ -208,18 +237,28 @@ async def _delete_previous(marker):
         return
 
     try:
+        previous_id = _last_remote_message_ids.get(marker)
+
+        if previous_id:
+            try:
+                await _storage_app.delete_messages(
+                    _chat_id(),
+                    previous_id
+                )
+                _last_remote_message_ids.pop(marker, None)
+                return
+            except Exception:
+                pass
 
         message = await _find_latest(marker)
 
         if message:
-
             await _storage_app.delete_messages(
                 _chat_id(),
                 message.id
             )
 
     except Exception as e:
-
         print(
             f"Remote delete error: {e}"
         )
@@ -229,53 +268,33 @@ def _create_snapshot():
     if not os.path.exists(DB_PATH):
         return None
 
-    os.makedirs(
-        "data",
-        exist_ok=True
-    )
+    os.makedirs("data", exist_ok=True)
 
-    path = (
-        "data/.remote_database_snapshot.db"
-    )
+    path = "data/.remote_database_snapshot.db"
 
     source = None
     destination = None
 
     try:
-
-        source = sqlite3.connect(
-            DB_PATH
-        )
-
-        destination = sqlite3.connect(
-            path
-        )
-
-        source.backup(
-            destination
-        )
-
+        source = sqlite3.connect(DB_PATH)
+        destination = sqlite3.connect(path)
+        source.backup(destination)
         return path
 
     except Exception as e:
-
         print(
             f"Database snapshot error: {e}"
         )
-
         return None
 
     finally:
-
         if destination:
-
             try:
                 destination.close()
             except Exception:
                 pass
 
         if source:
-
             try:
                 source.close()
             except Exception:
@@ -294,20 +313,19 @@ async def upload_database():
     marker = "CAFE_HERMES_DATABASE"
 
     try:
+        await _delete_previous(marker)
 
-        await _delete_previous(
-            marker
-        )
-
-        await _storage_app.send_document(
+        sent = await _storage_app.send_document(
             _chat_id(),
             snapshot,
             caption=(
                 f"{marker}\n"
-                f"Updated: "
-                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
         )
+
+        if sent:
+            _last_remote_message_ids[marker] = sent.id
 
         print(
             "Remote database synchronized."
@@ -316,15 +334,12 @@ async def upload_database():
         return True
 
     except Exception as e:
-
         print(
             f"Remote database upload error: {e}"
         )
-
         return False
 
     finally:
-
         try:
             os.remove(snapshot)
         except Exception:
@@ -341,20 +356,19 @@ async def upload_config():
     marker = "CAFE_HERMES_CONFIG"
 
     try:
+        await _delete_previous(marker)
 
-        await _delete_previous(
-            marker
-        )
-
-        await _storage_app.send_document(
+        sent = await _storage_app.send_document(
             _chat_id(),
             CONFIG_PATH,
             caption=(
                 f"{marker}\n"
-                f"Updated: "
-                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
         )
+
+        if sent:
+            _last_remote_message_ids[marker] = sent.id
 
         print(
             "Remote config synchronized."
@@ -363,11 +377,9 @@ async def upload_config():
         return True
 
     except Exception as e:
-
         print(
             f"Remote config upload error: {e}"
         )
-
         return False
 
 
@@ -378,7 +390,6 @@ async def sync_all(force=False):
         return False
 
     async with _sync_lock:
-
         if not force and not _dirty:
             return True
 
@@ -389,24 +400,16 @@ async def sync_all(force=False):
         )
 
         db_ok = await upload_database()
-
         config_ok = await upload_config()
 
-        result = (
-            db_ok
-            and config_ok
-        )
+        result = db_ok and config_ok
 
         if result:
-
             print(
                 "Remote Storage: sync completed."
             )
-
         else:
-
             _dirty = True
-
             print(
                 "Remote Storage: sync failed."
             )
@@ -425,16 +428,13 @@ def schedule_sync():
 
     try:
         loop = asyncio.get_running_loop()
-
     except RuntimeError:
         return
 
     if _sync_task and not _sync_task.done():
         return
 
-    _sync_task = loop.create_task(
-        _sync_worker()
-    )
+    _sync_task = loop.create_task(_sync_worker())
 
 
 async def _sync_worker():
@@ -442,34 +442,23 @@ async def _sync_worker():
     global _dirty
 
     try:
-
-        # Small debounce prevents 10 quick database changes
-        # from creating 10 Telegram uploads.
         await asyncio.sleep(1.5)
 
         while _storage_started and _dirty:
-
-            await sync_all(
-                force=False
-            )
+            await sync_all(force=False)
 
             if _dirty:
-
-                await asyncio.sleep(
-                    1
-                )
+                await asyncio.sleep(1)
 
     except asyncio.CancelledError:
         raise
 
     except Exception as e:
-
         print(
             f"Remote sync worker error: {e}"
         )
 
     finally:
-
         _sync_task = None
 
 
@@ -477,58 +466,35 @@ async def _watch_files():
     global _last_db_mtime
     global _last_config_mtime
 
-    _last_db_mtime = _mtime(
-        DB_PATH
-    )
-
-    _last_config_mtime = _mtime(
-        CONFIG_PATH
-    )
+    _last_db_mtime = _mtime(DB_PATH)
+    _last_config_mtime = _mtime(CONFIG_PATH)
 
     while _storage_started:
-
         try:
+            await asyncio.sleep(3)
 
-            await asyncio.sleep(
-                3
-            )
-
-            db_mtime = _mtime(
-                DB_PATH
-            )
-
-            config_mtime = _mtime(
-                CONFIG_PATH
-            )
+            db_mtime = _mtime(DB_PATH)
+            config_mtime = _mtime(CONFIG_PATH)
 
             if db_mtime != _last_db_mtime:
-
                 _last_db_mtime = db_mtime
-
                 schedule_sync()
 
             if config_mtime != _last_config_mtime:
-
                 _last_config_mtime = config_mtime
-
                 schedule_sync()
 
         except asyncio.CancelledError:
             raise
 
         except Exception as e:
-
             print(
                 f"Remote watcher error: {e}"
             )
-
-            await asyncio.sleep(
-                5
-            )
+            await asyncio.sleep(5)
 
 
 def start_file_watcher():
-
     global _watcher_task
 
     if not _storage_started:
@@ -539,13 +505,10 @@ def start_file_watcher():
 
     try:
         loop = asyncio.get_running_loop()
-
     except RuntimeError:
         return
 
-    _watcher_task = loop.create_task(
-        _watch_files()
-    )
+    _watcher_task = loop.create_task(_watch_files())
 
     print(
         "Remote Storage watcher started."
@@ -556,29 +519,19 @@ async def restore_database_from_remote():
     if not _storage_started:
         return False
 
-    message = await _find_latest(
-        "CAFE_HERMES_DATABASE"
-    )
+    message = await _find_latest("CAFE_HERMES_DATABASE")
 
     if not message:
-
         print(
             "Remote Storage: no database backup found."
         )
-
         return False
 
-    os.makedirs(
-        "data",
-        exist_ok=True
-    )
+    os.makedirs("data", exist_ok=True)
 
-    temp_path = (
-        "data/.remote_restore.db"
-    )
+    temp_path = "data/.remote_restore.db"
 
     try:
-
         await _storage_app.download_media(
             message,
             file_name=temp_path
@@ -588,25 +541,14 @@ async def restore_database_from_remote():
             return False
 
         if os.path.exists(DB_PATH):
-
-            old_path = (
-                "data/cafe_hermes_before_restore.db"
-            )
+            old_path = "data/cafe_hermes_before_restore.db"
 
             try:
-
-                os.replace(
-                    DB_PATH,
-                    old_path
-                )
-
+                os.replace(DB_PATH, old_path)
             except Exception:
                 pass
 
-        os.replace(
-            temp_path,
-            DB_PATH
-        )
+        os.replace(temp_path, DB_PATH)
 
         print(
             "Remote database restored."
@@ -615,16 +557,13 @@ async def restore_database_from_remote():
         return True
 
     except Exception as e:
-
         print(
             f"Remote database restore error: {e}"
         )
 
         try:
-
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-
         except Exception:
             pass
 
@@ -635,29 +574,19 @@ async def restore_config_from_remote():
     if not _storage_started:
         return False
 
-    message = await _find_latest(
-        "CAFE_HERMES_CONFIG"
-    )
+    message = await _find_latest("CAFE_HERMES_CONFIG")
 
     if not message:
-
         print(
             "Remote Storage: no config backup found."
         )
-
         return False
 
-    os.makedirs(
-        "data",
-        exist_ok=True
-    )
+    os.makedirs("data", exist_ok=True)
 
-    temp_path = (
-        "data/.remote_config.json"
-    )
+    temp_path = "data/.remote_config.json"
 
     try:
-
         await _storage_app.download_media(
             message,
             file_name=temp_path
@@ -666,23 +595,13 @@ async def restore_config_from_remote():
         if not os.path.exists(temp_path):
             return False
 
-        with open(
-            temp_path,
-            "r",
-            encoding="utf-8"
-        ) as f:
-
+        with open(temp_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         if not isinstance(data, dict):
             return False
 
-        with open(
-            CONFIG_PATH,
-            "w",
-            encoding="utf-8"
-        ) as f:
-
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(
                 data,
                 f,
@@ -690,9 +609,7 @@ async def restore_config_from_remote():
                 indent=2
             )
 
-        os.remove(
-            temp_path
-        )
+        os.remove(temp_path)
 
         print(
             "Remote config restored."
@@ -701,16 +618,13 @@ async def restore_config_from_remote():
         return True
 
     except Exception as e:
-
         print(
             f"Remote config restore error: {e}"
         )
 
         try:
-
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-
         except Exception:
             pass
 
@@ -718,7 +632,6 @@ async def restore_config_from_remote():
 
 
 async def restore_from_remote():
-
     if not _storage_started:
         return False
 
@@ -727,10 +640,6 @@ async def restore_from_remote():
     )
 
     db_ok = await restore_database_from_remote()
-
     config_ok = await restore_config_from_remote()
 
-    return (
-        db_ok
-        or config_ok
-    )
+    return db_ok or config_ok
