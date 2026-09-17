@@ -5,9 +5,18 @@ import os
 from pyrogram import Client
 
 from bot.database import init_db
+
 from bot.user_handlers import register as register_users
 from bot.admin_handlers import register as register_admin
+
 from bot.backup import auto_backup_loop
+
+from bot.remote_storage import (
+    start_storage,
+    stop_storage,
+    restore_from_remote,
+    sync_all,
+)
 
 
 def load_config():
@@ -40,9 +49,11 @@ def load_config():
         )
 
     try:
+
         api_id = int(api_id)
 
     except ValueError:
+
         raise RuntimeError(
             "API_ID باید عدد باشد."
         )
@@ -60,6 +71,30 @@ async def main():
 
     config = load_config()
 
+    print("Starting Remote Storage...")
+
+    storage_started = await start_storage()
+
+    if storage_started:
+
+        print(
+            "Checking Remote Storage for previous data..."
+        )
+
+        restored = await restore_from_remote()
+
+        if restored:
+
+            print(
+                "Remote data restored successfully."
+            )
+
+    else:
+
+        print(
+            "Remote Storage is not available."
+        )
+
     print("Initializing database...")
 
     init_db()
@@ -73,13 +108,11 @@ async def main():
         bot_token=config["bot_token"]
     )
 
-    # اول هندلرهای ادمین
     register_admin(
         app,
         config
     )
 
-    # بعد هندلرهای کاربران
     register_users(
         app,
         config
@@ -91,9 +124,24 @@ async def main():
         "Cafe Hermes Bot started successfully."
     )
 
-    # بکاپ خودکار هر ۲۴ ساعت (قابل تنظیم در config)
+    # اولین ذخیره بعد از بالا آمدن ربات
+    if storage_started:
+
+        try:
+
+            await sync_all()
+
+        except Exception as e:
+
+            print(
+                f"Initial remote sync error: {e}"
+            )
+
     asyncio.create_task(
-        auto_backup_loop(app, config)
+        auto_backup_loop(
+            app,
+            config
+        )
     )
 
     try:
@@ -108,7 +156,25 @@ async def main():
 
     finally:
 
+        if storage_started:
+
+            try:
+
+                print(
+                    "Final remote synchronization..."
+                )
+
+                await sync_all()
+
+            except Exception as e:
+
+                print(
+                    f"Final remote sync error: {e}"
+                )
+
         await app.stop()
+
+        await stop_storage()
 
         print(
             "Cafe Hermes Bot stopped."
@@ -116,4 +182,5 @@ async def main():
 
 
 if __name__ == "__main__":
+
     asyncio.run(main())
