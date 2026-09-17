@@ -22,6 +22,7 @@ from bot.remote_storage import (
 from bot.remote_state_monitor import (
     start_remote_state_monitor,
     stop_remote_state_monitor,
+    mark_remote_state_ready,
 )
 
 
@@ -140,7 +141,10 @@ async def main():
                 "Checking Remote Storage..."
             )
 
-            await restore_from_remote()
+            restored = await restore_from_remote()
+
+            if restored:
+                mark_remote_state_ready()
 
         else:
 
@@ -195,9 +199,12 @@ async def main():
 
             try:
 
-                await sync_all(
+                synced = await sync_all(
                     force=True
                 )
+
+                if synced:
+                    mark_remote_state_ready()
 
             except Exception as e:
 
