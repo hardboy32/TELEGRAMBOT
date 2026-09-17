@@ -2,22 +2,28 @@ import os
 import json
 import asyncio
 import sqlite3
+import zipfile
+import shutil
 from datetime import datetime
 
 from pyrogram import filters
+from pyrogram.types import InputMediaDocument
 
 
 DB_PATH = "data/cafe_hermes.db"
 CONFIG_PATH = "config.json"
+STATE_MARKER = "CAFE_HERMES_STATE"
+STATE_ARCHIVE = "data/.remote_state.zip"
 
 STORAGE_CHAT_ID = os.getenv("STORAGE_CHAT_ID")
-
 
 _storage_app = None
 _storage_started = False
 _storage_chat = None
 _storage_ready_event = None
 _storage_observer_registered = False
+
+_state_message_id = None
 
 _sync_task = None
 _sync_lock = asyncio.Lock()
@@ -26,8 +32,6 @@ _dirty = False
 _last_db_mtime = None
 _last_config_mtime = None
 _watcher_task = None
-
-_last_remote_message_ids = {}
 
 
 def storage_enabled():
@@ -175,7 +179,7 @@ async def stop_storage():
     global _sync_task
     global _watcher_task
     global _dirty
-    global _last_remote_message_ids
+    global _state_message_id
 
     if _watcher_task:
         try:
@@ -201,7 +205,7 @@ async def stop_storage():
     _storage_chat = None
     _storage_started = False
     _dirty = False
-    _last_remote_message_ids = {}
+    _state_message_id = None
 
 
 def _chat_id():
@@ -210,160 +214,290 @@ def _chat_id():
     return int(STORAGE_CHAT_ID)
 
 
-async def _find_latest(marker):
-    if not _storage_started or not _storage_app or not _storage_chat:
+def _sanitized_config():
+    if not os.path.exists(CONFIG_PATH):
         return None
 
-    latest = None
-
     try:
-        async for message in _storage_app.get_chat_history(_storage_chat.id):
-            text = message.caption or message.text or ""
+        with open(
+            CONFIG_PATH,
+            "r",
+            encoding="utf-8"
+        ) as f:
+            data = json.load(f)
 
-            if text.startswith(marker):
-                latest = message
-                break
+        if not isinstance(data, dict):
+            return None
+
+        for key in (
+            "api_id",
+            "api_hash",
+            "bot_token"
+        ):
+            data.pop(key, None)
+
+        return data
 
     except Exception as e:
         print(
-            f"Remote history error: {e}"
+            f"Remote config snapshot error: {e}"
         )
-
-    return latest
-
-
-async def _delete_previous(marker):
-    if not _storage_started:
-        return
-
-    try:
-        previous_id = _last_remote_message_ids.get(marker)
-
-        if previous_id:
-            try:
-                await _storage_app.delete_messages(
-                    _chat_id(),
-                    previous_id
-                )
-                _last_remote_message_ids.pop(marker, None)
-                return
-            except Exception:
-                pass
-
-        message = await _find_latest(marker)
-
-        if message:
-            await _storage_app.delete_messages(
-                _chat_id(),
-                message.id
-            )
-
-    except Exception as e:
-        print(
-            f"Remote delete error: {e}"
-        )
+        return None
 
 
-def _create_snapshot():
+def _create_state_archive():
     if not os.path.exists(DB_PATH):
         return None
 
-    os.makedirs("data", exist_ok=True)
-    path = "data/.remote_database_snapshot.db"
-    source = None
-    destination = None
+    config = _sanitized_config()
+
+    if config is None:
+        return None
+
+    os.makedirs(
+        "data",
+        exist_ok=True
+    )
+
+    snapshot_path = "data/.remote_database_snapshot.db"
+    config_snapshot_path = "data/.remote_config_snapshot.json"
 
     try:
-        source = sqlite3.connect(DB_PATH)
-        destination = sqlite3.connect(path)
-        source.backup(destination)
-        return path
+        if os.path.exists(STATE_ARCHIVE):
+            os.remove(STATE_ARCHIVE)
+
+        source = None
+        destination = None
+
+        try:
+            source = sqlite3.connect(DB_PATH)
+            destination = sqlite3.connect(snapshot_path)
+            source.backup(destination)
+
+        finally:
+            if destination:
+                try:
+                    destination.close()
+                except Exception:
+                    pass
+
+            if source:
+                try:
+                    source.close()
+                except Exception:
+                    pass
+
+        with open(
+            config_snapshot_path,
+            "w",
+            encoding="utf-8"
+        ) as f:
+            json.dump(
+                config,
+                f,
+                ensure_ascii=False,
+                indent=2
+            )
+
+        with zipfile.ZipFile(
+            STATE_ARCHIVE,
+            "w",
+            compression=zipfile.ZIP_DEFLATED
+        ) as archive:
+            archive.write(
+                snapshot_path,
+                arcname="cafe_hermes.db"
+            )
+            archive.write(
+                config_snapshot_path,
+                arcname="config.json"
+            )
+
+        return STATE_ARCHIVE
+
     except Exception as e:
         print(
-            f"Database snapshot error: {e}"
+            f"Remote state archive error: {e}"
         )
         return None
+
     finally:
-        if destination:
+        for path in (
+            snapshot_path,
+            config_snapshot_path
+        ):
             try:
-                destination.close()
+                if os.path.exists(path):
+                    os.remove(path)
             except Exception:
                 pass
-        if source:
-            try:
-                source.close()
-            except Exception:
-                pass
 
 
-async def upload_database():
-    if not _storage_started:
-        return False
+def _cleanup_extract():
+    try:
+        shutil.rmtree(
+            "data/.remote_state_extract",
+            ignore_errors=True
+        )
+    except Exception:
+        pass
 
-    snapshot = _create_snapshot()
-    if not snapshot:
-        return False
 
-    marker = "CAFE_HERMES_DATABASE"
+def _cleanup_archive():
+    try:
+        if os.path.exists(STATE_ARCHIVE):
+            os.remove(STATE_ARCHIVE)
+    except Exception:
+        pass
+
+
+async def _refresh_storage_chat():
+    global _storage_chat
+
+    if not _storage_app or not _storage_chat:
+        return None
 
     try:
-        await _delete_previous(marker)
-        sent = await _storage_app.send_document(
-            _chat_id(),
-            snapshot,
-            caption=(
-                f"{marker}\n"
-                f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            )
+        _storage_chat = await _storage_app.get_chat(
+            _storage_chat.id
         )
-
-        if sent:
-            _last_remote_message_ids[marker] = sent.id
-
-        print("Remote database synchronized.")
-        return True
     except Exception as e:
         print(
-            f"Remote database upload error: {e}"
+            f"Remote Storage: chat refresh error: {e}"
         )
-        return False
-    finally:
+        return None
+
+    return _storage_chat
+
+
+async def _get_state_message():
+    global _state_message_id
+
+    if not _storage_started:
+        return None
+
+    chat = await _refresh_storage_chat()
+
+    if not chat:
+        return None
+
+    pinned = getattr(
+        chat,
+        "pinned_message",
+        None
+    )
+
+    if pinned:
+        caption = pinned.caption or pinned.text or ""
+
+        if caption.startswith(
+            STATE_MARKER
+        ):
+            _state_message_id = pinned.id
+            return pinned
+
+    if _state_message_id:
         try:
-            os.remove(snapshot)
+            message = await _storage_app.get_messages(
+                _chat_id(),
+                _state_message_id
+            )
+
+            if message:
+                caption = message.caption or message.text or ""
+
+                if caption.startswith(
+                    STATE_MARKER
+                ):
+                    return message
+
         except Exception:
             pass
 
+    return None
 
-async def upload_config():
-    if not _storage_started:
+
+async def _create_or_replace_state():
+    global _state_message_id
+
+    archive_path = _create_state_archive()
+
+    if not archive_path:
         return False
 
-    if not os.path.exists(CONFIG_PATH):
-        return False
-
-    marker = "CAFE_HERMES_CONFIG"
+    caption = (
+        f"{STATE_MARKER}\n"
+        "Contains: database + configuration\n"
+        f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
 
     try:
-        await _delete_previous(marker)
+        existing = await _get_state_message()
+
+        if existing:
+            try:
+                edited = await _storage_app.edit_message_media(
+                    _chat_id(),
+                    existing.id,
+                    InputMediaDocument(
+                        archive_path,
+                        caption=caption
+                    )
+                )
+
+                _state_message_id = (
+                    edited.id
+                    if edited
+                    else existing.id
+                )
+
+                print(
+                    "Remote Storage: state message updated."
+                )
+
+                return True
+
+            except Exception as e:
+                print(
+                    f"Remote Storage: state message edit failed: {e}"
+                )
+
         sent = await _storage_app.send_document(
             _chat_id(),
-            CONFIG_PATH,
-            caption=(
-                f"{marker}\n"
-                f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            )
+            archive_path,
+            caption=caption
         )
 
-        if sent:
-            _last_remote_message_ids[marker] = sent.id
+        if not sent:
+            return False
 
-        print("Remote config synchronized.")
+        _state_message_id = sent.id
+
+        try:
+            await _storage_app.pin_chat_message(
+                _chat_id(),
+                sent.id,
+                disable_notification=True
+            )
+        except Exception as e:
+            print(
+                f"Remote Storage: pin failed: {e}"
+            )
+
+        print(
+            "Remote Storage: new state message created."
+        )
+
         return True
+
     except Exception as e:
         print(
-            f"Remote config upload error: {e}"
+            f"Remote Storage: state upload error: {e}"
         )
         return False
+
+    finally:
+        _cleanup_archive()
 
 
 async def sync_all(force=False):
@@ -377,17 +511,22 @@ async def sync_all(force=False):
             return True
 
         _dirty = False
-        print("Remote Storage: sync started.")
 
-        db_ok = await upload_database()
-        config_ok = await upload_config()
-        result = db_ok and config_ok
+        print(
+            "Remote Storage: sync started."
+        )
+
+        result = await _create_or_replace_state()
 
         if result:
-            print("Remote Storage: sync completed.")
+            print(
+                "Remote Storage: sync completed."
+            )
         else:
             _dirty = True
-            print("Remote Storage: sync failed.")
+            print(
+                "Remote Storage: sync failed."
+            )
 
         return result
 
@@ -406,10 +545,15 @@ def schedule_sync():
     except RuntimeError:
         return
 
-    if _sync_task and not _sync_task.done():
+    if (
+        _sync_task
+        and not _sync_task.done()
+    ):
         return
 
-    _sync_task = loop.create_task(_sync_worker())
+    _sync_task = loop.create_task(
+        _sync_worker()
+    )
 
 
 async def _sync_worker():
@@ -419,18 +563,25 @@ async def _sync_worker():
     try:
         await asyncio.sleep(1.5)
 
-        while _storage_started and _dirty:
-            await sync_all(force=False)
+        while (
+            _storage_started
+            and _dirty
+        ):
+            await sync_all(
+                force=False
+            )
 
             if _dirty:
                 await asyncio.sleep(1)
 
     except asyncio.CancelledError:
         raise
+
     except Exception as e:
         print(
             f"Remote sync worker error: {e}"
         )
+
     finally:
         _sync_task = None
 
@@ -459,6 +610,7 @@ async def _watch_files():
 
         except asyncio.CancelledError:
             raise
+
         except Exception as e:
             print(
                 f"Remote watcher error: {e}"
@@ -472,7 +624,10 @@ def start_file_watcher():
     if not _storage_started:
         return
 
-    if _watcher_task and not _watcher_task.done():
+    if (
+        _watcher_task
+        and not _watcher_task.done()
+    ):
         return
 
     try:
@@ -480,118 +635,146 @@ def start_file_watcher():
     except RuntimeError:
         return
 
-    _watcher_task = loop.create_task(_watch_files())
-    print("Remote Storage watcher started.")
+    _watcher_task = loop.create_task(
+        _watch_files()
+    )
 
-
-async def restore_database_from_remote():
-    if not _storage_started:
-        return False
-
-    message = await _find_latest("CAFE_HERMES_DATABASE")
-
-    if not message:
-        print("Remote Storage: no database backup found.")
-        return False
-
-    os.makedirs("data", exist_ok=True)
-    temp_path = "data/.remote_restore.db"
-
-    try:
-        await _storage_app.download_media(
-            message,
-            file_name=temp_path
-        )
-
-        if not os.path.exists(temp_path):
-            return False
-
-        if os.path.exists(DB_PATH):
-            old_path = "data/cafe_hermes_before_restore.db"
-            try:
-                os.replace(DB_PATH, old_path)
-            except Exception:
-                pass
-
-        os.replace(temp_path, DB_PATH)
-        print("Remote database restored.")
-        return True
-
-    except Exception as e:
-        print(
-            f"Remote database restore error: {e}"
-        )
-
-        try:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-        except Exception:
-            pass
-
-        return False
-
-
-async def restore_config_from_remote():
-    if not _storage_started:
-        return False
-
-    message = await _find_latest("CAFE_HERMES_CONFIG")
-
-    if not message:
-        print("Remote Storage: no config backup found.")
-        return False
-
-    os.makedirs("data", exist_ok=True)
-    temp_path = "data/.remote_config.json"
-
-    try:
-        await _storage_app.download_media(
-            message,
-            file_name=temp_path
-        )
-
-        if not os.path.exists(temp_path):
-            return False
-
-        with open(temp_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        if not isinstance(data, dict):
-            return False
-
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(
-                data,
-                f,
-                ensure_ascii=False,
-                indent=2
-            )
-
-        os.remove(temp_path)
-        print("Remote config restored.")
-        return True
-
-    except Exception as e:
-        print(
-            f"Remote config restore error: {e}"
-        )
-
-        try:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-        except Exception:
-            pass
-
-        return False
+    print(
+        "Remote Storage watcher started."
+    )
 
 
 async def restore_from_remote():
     if not _storage_started:
         return False
 
-    print("Remote Storage: checking remote state...")
+    print(
+        "Remote Storage: checking remote state..."
+    )
 
-    db_ok = await restore_database_from_remote()
-    config_ok = await restore_config_from_remote()
+    message = await _get_state_message()
 
-    return db_ok or config_ok
+    if not message:
+        print(
+            "Remote Storage: no pinned state backup found."
+        )
+        return False
+
+    os.makedirs(
+        "data",
+        exist_ok=True
+    )
+
+    temp_archive = "data/.remote_state_restore.zip"
+    extract_root = "data/.remote_state_extract"
+
+    _cleanup_extract()
+
+    try:
+        await _storage_app.download_media(
+            message,
+            file_name=temp_archive
+        )
+
+        if not os.path.exists(temp_archive):
+            return False
+
+        os.makedirs(
+            extract_root,
+            exist_ok=True
+        )
+
+        with zipfile.ZipFile(
+            temp_archive,
+            "r"
+        ) as archive:
+            names = set(archive.namelist())
+
+            if not {
+                "cafe_hermes.db",
+                "config.json"
+            }.issubset(names):
+                raise RuntimeError(
+                    "Remote state archive is incomplete."
+                )
+
+            archive.extract(
+                "cafe_hermes.db",
+                extract_root
+            )
+            archive.extract(
+                "config.json",
+                extract_root
+            )
+
+        extracted_db = (
+            "data/.remote_state_extract/cafe_hermes.db"
+        )
+        extracted_config = (
+            "data/.remote_state_extract/config.json"
+        )
+
+        if not os.path.exists(extracted_db):
+            raise RuntimeError(
+                "Restored database is missing."
+            )
+
+        if not os.path.exists(extracted_config):
+            raise RuntimeError(
+                "Restored config is missing."
+            )
+
+        with open(
+            extracted_config,
+            "r",
+            encoding="utf-8"
+        ) as f:
+            restored_config = json.load(f)
+
+        if not isinstance(
+            restored_config,
+            dict
+        ):
+            raise RuntimeError(
+                "Restored config is invalid."
+            )
+
+        if os.path.exists(DB_PATH):
+            try:
+                os.replace(
+                    DB_PATH,
+                    "data/cafe_hermes_before_restore.db"
+                )
+            except Exception:
+                pass
+
+        os.replace(
+            extracted_db,
+            DB_PATH
+        )
+
+        os.replace(
+            extracted_config,
+            CONFIG_PATH
+        )
+
+        print(
+            "Remote state restored successfully."
+        )
+
+        return True
+
+    except Exception as e:
+        print(
+            f"Remote state restore error: {e}"
+        )
+        return False
+
+    finally:
+        try:
+            if os.path.exists(temp_archive):
+                os.remove(temp_archive)
+        except Exception:
+            pass
+
+        _cleanup_extract()
