@@ -278,6 +278,7 @@ def register(app, config):
         await query.answer()
         service_states.pop(query.from_user.id, None)
         await _show_services_callback(query)
+        raise StopPropagation
 
     @app.on_callback_query(
         filters.regex("^admin_add_service$"),
@@ -298,6 +299,7 @@ def register(app, config):
             "💾 حجم پلن را به گیگابایت وارد کنید:\n"
             "مثال: 50 یا 100 یا 200"
         )
+        raise StopPropagation
 
     @app.on_callback_query(
         filters.regex(r"^admin_service_\d+$"),
@@ -314,7 +316,7 @@ def register(app, config):
             service_id = int(query.data.rsplit("_", 1)[1])
         except (TypeError, ValueError):
             await query.message.edit_text("❌ شناسه سرویس نامعتبر است.")
-            return
+            raise StopPropagation
 
         service = get_service(service_id)
 
@@ -325,13 +327,14 @@ def register(app, config):
                     [[InlineKeyboardButton("⬅️ بازگشت", callback_data="admin_services")]]
                 )
             )
-            return
+            raise StopPropagation
 
         service_states.pop(query.from_user.id, None)
         await query.message.edit_text(
             _service_detail_text(service),
             reply_markup=_service_detail_keyboard(service_id)
         )
+        raise StopPropagation
 
     @app.on_callback_query(
         filters.regex(r"^svc_edit_vol_\d+$"),
@@ -348,7 +351,7 @@ def register(app, config):
 
         if not service:
             await query.message.edit_text("❌ سرویس پیدا نشد.")
-            return
+            raise StopPropagation
 
         service_states[query.from_user.id] = {
             "action": "edit_volume",
@@ -359,6 +362,7 @@ def register(app, config):
             "💾 حجم جدید را به گیگابایت وارد کنید:\n"
             f"حجم فعلی: {service['volume_gb']}GB"
         )
+        raise StopPropagation
 
     @app.on_callback_query(
         filters.regex(r"^svc_edit_price_\d+$"),
@@ -375,7 +379,7 @@ def register(app, config):
 
         if not service:
             await query.message.edit_text("❌ سرویس پیدا نشد.")
-            return
+            raise StopPropagation
 
         service_states[query.from_user.id] = {
             "action": "edit_price",
@@ -386,6 +390,7 @@ def register(app, config):
             "💰 قیمت جدید را به تومان وارد کنید:\n"
             f"قیمت فعلی: {format_price(service['price'])} تومان"
         )
+        raise StopPropagation
 
     @app.on_callback_query(
         filters.regex(r"^svc_toggle_\d+$"),
@@ -402,7 +407,7 @@ def register(app, config):
 
         if not service:
             await query.message.edit_text("❌ سرویس پیدا نشد.")
-            return
+            raise StopPropagation
 
         toggle_service(service_id)
         service = get_service(service_id)
@@ -411,6 +416,7 @@ def register(app, config):
             _service_detail_text(service),
             reply_markup=_service_detail_keyboard(service_id)
         )
+        raise StopPropagation
 
     @app.on_callback_query(
         filters.regex(r"^svc_del_\d+$"),
@@ -427,8 +433,9 @@ def register(app, config):
 
         if not service:
             await query.message.edit_text("❌ سرویس پیدا نشد.")
-            return
+            raise StopPropagation
 
         delete_service(service_id)
         service_states.pop(query.from_user.id, None)
         await _show_services_callback(query)
+        raise StopPropagation
