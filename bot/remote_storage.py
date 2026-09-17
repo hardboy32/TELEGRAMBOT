@@ -6,8 +6,7 @@ import zipfile
 import shutil
 from datetime import datetime
 
-from pyrogram import filters
-from pyrogram.types import InputMediaDocument
+import aiohttp
 
 
 DB_PATH = "data/cafe_hermes.db"
@@ -16,14 +15,11 @@ STATE_MARKER = "CAFE_HERMES_STATE"
 STATE_ARCHIVE = "data/.remote_state.zip"
 
 STORAGE_CHAT_ID = os.getenv("STORAGE_CHAT_ID")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 _storage_app = None
 _storage_started = False
-_storage_chat = None
-_storage_ready_event = None
-_storage_observer_registered = False
-
-_state_message_id = None
+_storage_chat_id = None
 
 _sync_task = None
 _sync_lock = asyncio.Lock()
@@ -33,9 +29,11 @@ _last_db_mtime = None
 _last_config_mtime = None
 _watcher_task = None
 
+_state_message_id = None
+
 
 def storage_enabled():
-    return bool(STORAGE_CHAT_ID)
+    return bool(STORAGE_CHAT_ID and BOT_TOKEN)
 
 
 def _mtime(path):
@@ -45,141 +43,92 @@ def _mtime(path):
         return None
 
 
-async def _connect_from_channel_message(message):
-    global _storage_chat
-    global _storage_started
+async def _bot_api(method, data=None, multipart=None):
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is not configured.")
 
-    if not STORAGE_CHAT_ID:
-        return
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    timeout = aiohttp.ClientTimeout(total=60)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        if multipart is not None:
+            request = session.post(url, data=multipart)
+        else:
+            request = session.post(url, json=data or {})
+
+        async with request as response:
+            payload = await response.json(content_type=None)
+
+            if not payload.get("ok"):
+                description = payload.get("description", "Telegram API error")
+                raise RuntimeError(description)
+
+            return payload.get("result")
+
+
+async def _get_storage_chat():
+    global _storage_chat_id
 
     try:
         target_id = int(STORAGE_CHAT_ID)
     except (TypeError, ValueError):
-        return
+        raise RuntimeError("STORAGE_CHAT_ID is invalid.")
 
-    if not message or not message.chat:
-        return
-
-    if message.chat.id != target_id:
-        return
-
-    _storage_chat = message.chat
-    _storage_started = True
-
-    print(
-        "Remote Storage: storage channel detected from a new channel post: "
-        f"{_storage_chat.id}"
+    chat = await _bot_api(
+        "getChat",
+        {"chat_id": target_id}
     )
 
-    if _storage_ready_event and not _storage_ready_event.is_set():
-        _storage_ready_event.set()
+    if not chat or chat.get("id") != target_id:
+        raise RuntimeError("Telegram returned a different storage chat.")
 
-
-async def _register_storage_observer(app):
-    global _storage_ready_event
-    global _storage_observer_registered
-
-    if _storage_observer_registered:
-        return
-
-    _storage_ready_event = asyncio.Event()
-
-    @app.on_message(filters.channel, group=-1000)
-    async def _storage_channel_observer(client, message):
-        await _connect_from_channel_message(message)
-
-    _storage_observer_registered = True
+    _storage_chat_id = target_id
+    return chat
 
 
 async def start_storage(app):
     global _storage_app
     global _storage_started
-    global _storage_chat
+    global _storage_chat_id
 
     _storage_app = app
 
-    if not storage_enabled():
-        print(
-            "Remote Storage: STORAGE_CHAT_ID is not configured."
-        )
+    if not STORAGE_CHAT_ID:
+        print("Remote Storage: STORAGE_CHAT_ID is not configured.")
+        return False
+
+    if not BOT_TOKEN:
+        print("Remote Storage: BOT_TOKEN is not configured.")
         return False
 
     try:
-        target_id = int(STORAGE_CHAT_ID)
-    except (TypeError, ValueError):
-        print(
-            "Remote Storage: STORAGE_CHAT_ID is invalid."
-        )
-        return False
+        print("Remote Storage: resolving private storage channel automatically...")
 
-    try:
-        print(
-            "Remote Storage: connecting to storage channel..."
-        )
-
-        # Register the observer BEFORE trying direct lookup so a fresh bot
-        # process can learn the private channel from a channel-post update.
-        await _register_storage_observer(_storage_app)
-
-        try:
-            _storage_chat = await _storage_app.get_chat(target_id)
-        except Exception as e:
-            print(
-                f"Remote Storage: direct channel lookup unavailable: {e}"
-            )
-            _storage_chat = None
-
-        if _storage_chat is None:
-            print(
-                "Remote Storage: waiting for a new post from the storage channel..."
-            )
-            print(
-                "Send any new message in the private storage channel while the bot is starting."
-            )
-
-            try:
-                # Give Telegram/Pyrogram enough time to deliver the channel post.
-                # The previous 30-second timeout was too short in practice.
-                await asyncio.wait_for(
-                    _storage_ready_event.wait(),
-                    timeout=120
-                )
-            except asyncio.TimeoutError:
-                print(
-                    "Remote Storage: storage channel was not detected within 120 seconds."
-                )
-                _storage_started = False
-                return False
-
-        if _storage_chat is None or _storage_chat.id != target_id:
-            print(
-                "Remote Storage: storage channel could not be confirmed."
-            )
-            _storage_started = False
-            return False
-
+        chat = await _get_storage_chat()
+        _storage_chat_id = chat["id"]
         _storage_started = True
 
         print(
-            "Remote Storage connected successfully: "
-            f"{_storage_chat.id}"
+            "Remote Storage connected automatically: "
+            f"{_storage_chat_id}"
         )
 
         return True
 
     except Exception as e:
-        print(
-            f"Remote Storage connection error: {e}"
-        )
         _storage_started = False
-        _storage_chat = None
+        _storage_chat_id = None
+        print(f"Remote Storage connection error: {e}")
+        print(
+            "Remote Storage: make sure the bot is a member/admin of the private channel."
+        )
         return False
 
 
 async def stop_storage():
     global _storage_started
     global _storage_app
-    global _storage_chat
+    global _storage_chat_id
     global _sync_task
     global _watcher_task
     global _dirty
@@ -206,15 +155,15 @@ async def stop_storage():
     _watcher_task = None
     _sync_task = None
     _storage_app = None
-    _storage_chat = None
+    _storage_chat_id = None
     _storage_started = False
     _dirty = False
     _state_message_id = None
 
 
 def _chat_id():
-    if _storage_chat:
-        return _storage_chat.id
+    if _storage_chat_id is not None:
+        return _storage_chat_id
     return int(STORAGE_CHAT_ID)
 
 
@@ -223,29 +172,19 @@ def _sanitized_config():
         return None
 
     try:
-        with open(
-            CONFIG_PATH,
-            "r",
-            encoding="utf-8"
-        ) as f:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         if not isinstance(data, dict):
             return None
 
-        for key in (
-            "api_id",
-            "api_hash",
-            "bot_token"
-        ):
+        for key in ("api_id", "api_hash", "bot_token"):
             data.pop(key, None)
 
         return data
 
     except Exception as e:
-        print(
-            f"Remote config snapshot error: {e}"
-        )
+        print(f"Remote config snapshot error: {e}")
         return None
 
 
@@ -254,14 +193,10 @@ def _create_state_archive():
         return None
 
     config = _sanitized_config()
-
     if config is None:
         return None
 
-    os.makedirs(
-        "data",
-        exist_ok=True
-    )
+    os.makedirs("data", exist_ok=True)
 
     snapshot_path = "data/.remote_database_snapshot.db"
     config_snapshot_path = "data/.remote_config_snapshot.json"
@@ -277,59 +212,37 @@ def _create_state_archive():
             source = sqlite3.connect(DB_PATH)
             destination = sqlite3.connect(snapshot_path)
             source.backup(destination)
-
         finally:
             if destination:
                 try:
                     destination.close()
                 except Exception:
                     pass
-
             if source:
                 try:
                     source.close()
                 except Exception:
                     pass
 
-        with open(
-            config_snapshot_path,
-            "w",
-            encoding="utf-8"
-        ) as f:
-            json.dump(
-                config,
-                f,
-                ensure_ascii=False,
-                indent=2
-            )
+        with open(config_snapshot_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
 
         with zipfile.ZipFile(
             STATE_ARCHIVE,
             "w",
             compression=zipfile.ZIP_DEFLATED
         ) as archive:
-            archive.write(
-                snapshot_path,
-                arcname="cafe_hermes.db"
-            )
-            archive.write(
-                config_snapshot_path,
-                arcname="config.json"
-            )
+            archive.write(snapshot_path, arcname="cafe_hermes.db")
+            archive.write(config_snapshot_path, arcname="config.json")
 
         return STATE_ARCHIVE
 
     except Exception as e:
-        print(
-            f"Remote state archive error: {e}"
-        )
+        print(f"Remote state archive error: {e}")
         return None
 
     finally:
-        for path in (
-            snapshot_path,
-            config_snapshot_path
-        ):
+        for path in (snapshot_path, config_snapshot_path):
             try:
                 if os.path.exists(path):
                     os.remove(path)
@@ -339,10 +252,7 @@ def _create_state_archive():
 
 def _cleanup_extract():
     try:
-        shutil.rmtree(
-            "data/.remote_state_extract",
-            ignore_errors=True
-        )
+        shutil.rmtree("data/.remote_state_extract", ignore_errors=True)
     except Exception:
         pass
 
@@ -355,77 +265,88 @@ def _cleanup_archive():
         pass
 
 
-async def _refresh_storage_chat():
-    global _storage_chat
-
-    if not _storage_app or not _storage_chat:
-        return None
-
-    try:
-        _storage_chat = await _storage_app.get_chat(
-            _storage_chat.id
-        )
-    except Exception as e:
-        print(
-            f"Remote Storage: chat refresh error: {e}"
-        )
-        return None
-
-    return _storage_chat
-
-
 async def _get_state_message():
     global _state_message_id
 
     if not _storage_started:
         return None
 
-    chat = await _refresh_storage_chat()
-
-    if not chat:
+    try:
+        chat = await _get_storage_chat()
+    except Exception as e:
+        print(f"Remote Storage: getChat failed while checking state: {e}")
         return None
 
-    pinned = getattr(
-        chat,
-        "pinned_message",
-        None
-    )
+    pinned = chat.get("pinned_message") if isinstance(chat, dict) else None
 
     if pinned:
-        caption = pinned.caption or pinned.text or ""
-
-        if caption.startswith(
-            STATE_MARKER
-        ):
-            _state_message_id = pinned.id
+        caption = pinned.get("caption") or pinned.get("text") or ""
+        if caption.startswith(STATE_MARKER):
+            _state_message_id = pinned.get("message_id")
+            if _state_message_id is None:
+                _state_message_id = pinned.get("id")
             return pinned
 
-    if _state_message_id:
-        try:
-            message = await _storage_app.get_messages(
-                _chat_id(),
-                _state_message_id
-            )
-
-            if message:
-                caption = message.caption or message.text or ""
-
-                if caption.startswith(
-                    STATE_MARKER
-                ):
-                    return message
-
-        except Exception:
-            pass
-
     return None
+
+
+async def _send_document(archive_path, caption):
+    form = aiohttp.FormData()
+    form.add_field("chat_id", str(_chat_id()))
+    form.add_field("caption", caption)
+
+    with open(archive_path, "rb") as document:
+        form.add_field(
+            "document",
+            document,
+            filename=os.path.basename(archive_path),
+            content_type="application/zip"
+        )
+        result = await _bot_api("sendDocument", multipart=form)
+
+    return result
+
+
+async def _edit_document(message_id, archive_path, caption):
+    form = aiohttp.FormData()
+    form.add_field("chat_id", str(_chat_id()))
+    form.add_field("message_id", str(message_id))
+    form.add_field(
+        "media",
+        json.dumps({
+            "type": "document",
+            "media": "attach://statefile",
+            "caption": caption
+        })
+    )
+
+    with open(archive_path, "rb") as document:
+        form.add_field(
+            "statefile",
+            document,
+            filename=os.path.basename(archive_path),
+            content_type="application/zip"
+        )
+        result = await _bot_api("editMessageMedia", multipart=form)
+
+    return result
+
+
+async def _pin_message(message_id):
+    return await _bot_api(
+        "pinChatMessage",
+        {
+            "chat_id": _chat_id(),
+            "message_id": message_id,
+            "disable_notification": True
+        }
+    )
 
 
 async def _create_or_replace_state():
     global _state_message_id
 
     archive_path = _create_state_archive()
-
     if not archive_path:
         return False
 
@@ -439,65 +360,45 @@ async def _create_or_replace_state():
         existing = await _get_state_message()
 
         if existing:
+            existing_id = existing.get("message_id", existing.get("id"))
             try:
-                edited = await _storage_app.edit_message_media(
-                    _chat_id(),
-                    existing.id,
-                    InputMediaDocument(
-                        archive_path,
-                        caption=caption
-                    )
+                edited = await _edit_document(
+                    existing_id,
+                    archive_path,
+                    caption
                 )
 
                 _state_message_id = (
-                    edited.id
-                    if edited
-                    else existing.id
+                    edited.get("message_id", edited.get("id", existing_id))
+                    if edited else existing_id
                 )
 
-                print(
-                    "Remote Storage: state message updated."
-                )
-
+                print("Remote Storage: state message updated.")
                 return True
 
             except Exception as e:
-                print(
-                    f"Remote Storage: state message edit failed: {e}"
-                )
+                print(f"Remote Storage: state message edit failed: {e}")
 
-        sent = await _storage_app.send_document(
-            _chat_id(),
+        sent = await _send_document(
             archive_path,
-            caption=caption
+            caption
         )
 
         if not sent:
             return False
 
-        _state_message_id = sent.id
+        _state_message_id = sent.get("message_id", sent.get("id"))
 
         try:
-            await _storage_app.pin_chat_message(
-                _chat_id(),
-                sent.id,
-                disable_notification=True
-            )
+            await _pin_message(_state_message_id)
         except Exception as e:
-            print(
-                f"Remote Storage: pin failed: {e}"
-            )
+            print(f"Remote Storage: pin failed: {e}")
 
-        print(
-            "Remote Storage: new state message created."
-        )
-
+        print("Remote Storage: new state message created.")
         return True
 
     except Exception as e:
-        print(
-            f"Remote Storage: state upload error: {e}"
-        )
+        print(f"Remote Storage: state upload error: {e}")
         return False
 
     finally:
@@ -515,22 +416,15 @@ async def sync_all(force=False):
             return True
 
         _dirty = False
-
-        print(
-            "Remote Storage: sync started."
-        )
+        print("Remote Storage: sync started.")
 
         result = await _create_or_replace_state()
 
         if result:
-            print(
-                "Remote Storage: sync completed."
-            )
+            print("Remote Storage: sync completed.")
         else:
             _dirty = True
-            print(
-                "Remote Storage: sync failed."
-            )
+            print("Remote Storage: sync failed.")
 
         return result
 
@@ -549,15 +443,10 @@ def schedule_sync():
     except RuntimeError:
         return
 
-    if (
-        _sync_task
-        and not _sync_task.done()
-    ):
+    if _sync_task and not _sync_task.done():
         return
 
-    _sync_task = loop.create_task(
-        _sync_worker()
-    )
+    _sync_task = loop.create_task(_sync_worker())
 
 
 async def _sync_worker():
@@ -567,25 +456,16 @@ async def _sync_worker():
     try:
         await asyncio.sleep(1.5)
 
-        while (
-            _storage_started
-            and _dirty
-        ):
-            await sync_all(
-                force=False
-            )
+        while _storage_started and _dirty:
+            await sync_all(force=False)
 
             if _dirty:
                 await asyncio.sleep(1)
 
     except asyncio.CancelledError:
         raise
-
     except Exception as e:
-        print(
-            f"Remote sync worker error: {e}"
-        )
-
+        print(f"Remote sync worker error: {e}")
     finally:
         _sync_task = None
 
@@ -614,11 +494,8 @@ async def _watch_files():
 
         except asyncio.CancelledError:
             raise
-
         except Exception as e:
-            print(
-                f"Remote watcher error: {e}"
-            )
+            print(f"Remote watcher error: {e}")
             await asyncio.sleep(5)
 
 
@@ -628,10 +505,7 @@ def start_file_watcher():
     if not _storage_started:
         return
 
-    if (
-        _watcher_task
-        and not _watcher_task.done()
-    ):
+    if _watcher_task and not _watcher_task.done():
         return
 
     try:
@@ -639,35 +513,59 @@ def start_file_watcher():
     except RuntimeError:
         return
 
-    _watcher_task = loop.create_task(
-        _watch_files()
+    _watcher_task = loop.create_task(_watch_files())
+    print("Remote Storage watcher started.")
+
+
+async def _download_document(message, destination):
+    document = message.get("document") if isinstance(message, dict) else None
+    if not document:
+        raise RuntimeError("Pinned state message does not contain a document.")
+
+    file_id = document.get("file_id")
+    if not file_id:
+        raise RuntimeError("Pinned state document file_id is missing.")
+
+    file_info = await _bot_api(
+        "getFile",
+        {"file_id": file_id}
     )
 
-    print(
-        "Remote Storage watcher started."
-    )
+    file_path = file_info.get("file_path") if file_info else None
+    if not file_path:
+        raise RuntimeError("Telegram did not return a file path.")
+
+    url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+    timeout = aiohttp.ClientTimeout(total=120)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url) as response:
+            if response.status != 200:
+                raise RuntimeError(
+                    f"Telegram file download failed with HTTP {response.status}."
+                )
+
+            with open(destination, "wb") as output:
+                while True:
+                    chunk = await response.content.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    output.write(chunk)
 
 
 async def restore_from_remote():
     if not _storage_started:
         return False
 
-    print(
-        "Remote Storage: checking remote state..."
-    )
+    print("Remote Storage: checking remote state...")
 
     message = await _get_state_message()
 
     if not message:
-        print(
-            "Remote Storage: no pinned state backup found."
-        )
+        print("Remote Storage: no pinned state backup found.")
         return False
 
-    os.makedirs(
-        "data",
-        exist_ok=True
-    )
+    os.makedirs("data", exist_ok=True)
 
     temp_archive = "data/.remote_state_restore.zip"
     extract_root = "data/.remote_state_extract"
@@ -675,103 +573,54 @@ async def restore_from_remote():
     _cleanup_extract()
 
     try:
-        await _storage_app.download_media(
+        await _download_document(
             message,
-            file_name=temp_archive
+            temp_archive
         )
 
         if not os.path.exists(temp_archive):
             return False
 
-        os.makedirs(
-            extract_root,
-            exist_ok=True
-        )
+        os.makedirs(extract_root, exist_ok=True)
 
-        with zipfile.ZipFile(
-            temp_archive,
-            "r"
-        ) as archive:
+        with zipfile.ZipFile(temp_archive, "r") as archive:
             names = set(archive.namelist())
 
-            if not {
-                "cafe_hermes.db",
-                "config.json"
-            }.issubset(names):
-                raise RuntimeError(
-                    "Remote state archive is incomplete."
-                )
+            if not {"cafe_hermes.db", "config.json"}.issubset(names):
+                raise RuntimeError("Remote state archive is incomplete.")
 
-            archive.extract(
-                "cafe_hermes.db",
-                extract_root
-            )
-            archive.extract(
-                "config.json",
-                extract_root
-            )
+            archive.extract("cafe_hermes.db", extract_root)
+            archive.extract("config.json", extract_root)
 
-        extracted_db = (
-            "data/.remote_state_extract/cafe_hermes.db"
-        )
-        extracted_config = (
-            "data/.remote_state_extract/config.json"
-        )
+        extracted_db = "data/.remote_state_extract/cafe_hermes.db"
+        extracted_config = "data/.remote_state_extract/config.json"
 
         if not os.path.exists(extracted_db):
-            raise RuntimeError(
-                "Restored database is missing."
-            )
+            raise RuntimeError("Restored database is missing.")
 
         if not os.path.exists(extracted_config):
-            raise RuntimeError(
-                "Restored config is missing."
-            )
+            raise RuntimeError("Restored config is missing.")
 
-        with open(
-            extracted_config,
-            "r",
-            encoding="utf-8"
-        ) as f:
+        with open(extracted_config, "r", encoding="utf-8") as f:
             restored_config = json.load(f)
 
-        if not isinstance(
-            restored_config,
-            dict
-        ):
-            raise RuntimeError(
-                "Restored config is invalid."
-            )
+        if not isinstance(restored_config, dict):
+            raise RuntimeError("Restored config is invalid.")
 
         if os.path.exists(DB_PATH):
             try:
-                os.replace(
-                    DB_PATH,
-                    "data/cafe_hermes_before_restore.db"
-                )
+                os.replace(DB_PATH, "data/cafe_hermes_before_restore.db")
             except Exception:
                 pass
 
-        os.replace(
-            extracted_db,
-            DB_PATH
-        )
+        os.replace(extracted_db, DB_PATH)
+        os.replace(extracted_config, CONFIG_PATH)
 
-        os.replace(
-            extracted_config,
-            CONFIG_PATH
-        )
-
-        print(
-            "Remote state restored successfully."
-        )
-
+        print("Remote state restored successfully.")
         return True
 
     except Exception as e:
-        print(
-            f"Remote state restore error: {e}"
-        )
+        print(f"Remote state restore error: {e}")
         return False
 
     finally:
