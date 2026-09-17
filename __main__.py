@@ -7,6 +7,7 @@ from pyrogram import Client
 from bot.database import init_db
 from bot.user_handlers import register as register_users
 from bot.admin_handlers import register as register_admin
+from bot.store_control import register as register_store_control
 
 from bot.remote_storage import (
     start_storage,
@@ -48,25 +49,21 @@ def load_config():
     )
 
     if not api_id:
-
         raise RuntimeError(
             "API_ID در Environment Variables تنظیم نشده است."
         )
 
     if not api_hash:
-
         raise RuntimeError(
             "API_HASH در Environment Variables تنظیم نشده است."
         )
 
     if not bot_token:
-
         raise RuntimeError(
             "BOT_TOKEN در Environment Variables تنظیم نشده است."
         )
 
     try:
-
         api_id = int(
             api_id
         )
@@ -80,6 +77,13 @@ def load_config():
     config["api_id"] = api_id
     config["api_hash"] = api_hash
     config["bot_token"] = bot_token
+
+    # مقادیر پیش‌فرض
+    if "purchase_open" not in config:
+        config["purchase_open"] = True
+
+    if "renew_open" not in config:
+        config["renew_open"] = True
 
     return config
 
@@ -102,9 +106,6 @@ async def main():
             api_id=first_config["api_id"],
             api_hash=first_config["api_hash"],
             bot_token=first_config["bot_token"],
-
-            # More workers = better handling when
-            # several Telegram updates arrive together.
             workers=32
         )
 
@@ -140,8 +141,10 @@ async def main():
                 "Remote Storage is not available."
             )
 
-        # IMPORTANT:
-        # Load config AFTER remote restore.
+        print(
+            "Loading final configuration..."
+        )
+
         config = load_config()
 
         print(
@@ -164,12 +167,17 @@ async def main():
             config
         )
 
+        # قابلیت‌های جدید:
+        # کنترل خرید/تمدید + اشتراک‌های من
+        register_store_control(
+            app,
+            config
+        )
+
         if storage_started:
 
             start_file_watcher()
 
-            # First synchronization creates the
-            # initial remote state.
             try:
 
                 await sync_all(
