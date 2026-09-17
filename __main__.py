@@ -19,7 +19,9 @@ from bot.remote_storage import (
 
 def load_config():
 
-    if not os.path.exists("config.json"):
+    if not os.path.exists(
+        "config.json"
+    ):
 
         raise RuntimeError(
             "فایل config.json پیدا نشد."
@@ -33,9 +35,17 @@ def load_config():
 
         config = json.load(f)
 
-    api_id = os.getenv("API_ID")
-    api_hash = os.getenv("API_HASH")
-    bot_token = os.getenv("BOT_TOKEN")
+    api_id = os.getenv(
+        "API_ID"
+    )
+
+    api_hash = os.getenv(
+        "API_HASH"
+    )
+
+    bot_token = os.getenv(
+        "BOT_TOKEN"
+    )
 
     if not api_id:
 
@@ -57,7 +67,9 @@ def load_config():
 
     try:
 
-        api_id = int(api_id)
+        api_id = int(
+            api_id
+        )
 
     except ValueError:
 
@@ -83,13 +95,17 @@ async def main():
             "Starting Cafe Hermes Bot..."
         )
 
-        initial_config = load_config()
+        first_config = load_config()
 
         app = Client(
             "cafe_hermes_bot",
-            api_id=initial_config["api_id"],
-            api_hash=initial_config["api_hash"],
-            bot_token=initial_config["bot_token"]
+            api_id=first_config["api_id"],
+            api_hash=first_config["api_hash"],
+            bot_token=first_config["bot_token"],
+
+            # More workers = better handling when
+            # several Telegram updates arrive together.
+            workers=32
         )
 
         print(
@@ -113,8 +129,7 @@ async def main():
         if storage_started:
 
             print(
-                "Checking Remote Storage "
-                "for previous data..."
+                "Checking Remote Storage..."
             )
 
             await restore_from_remote()
@@ -125,10 +140,8 @@ async def main():
                 "Remote Storage is not available."
             )
 
-        print(
-            "Loading final configuration..."
-        )
-
+        # IMPORTANT:
+        # Load config AFTER remote restore.
         config = load_config()
 
         print(
@@ -155,6 +168,8 @@ async def main():
 
             start_file_watcher()
 
+            # First synchronization creates the
+            # initial remote state.
             try:
 
                 await sync_all(
