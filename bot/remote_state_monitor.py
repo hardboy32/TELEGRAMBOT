@@ -8,10 +8,22 @@ from bot import remote_storage
 
 DB_PATH = "data/cafe_hermes.db"
 CONFIG_PATH = "config.json"
+READY_MARKER = "data/.remote_state_ready"
 CHECK_INTERVAL = 300
 MIN_REMOTE_ADVANTAGE_SECONDS = 30
 
 _monitor_task = None
+
+
+def mark_remote_state_ready():
+    try:
+        os.makedirs("data", exist_ok=True)
+        with open(READY_MARKER, "w", encoding="utf-8") as f:
+            f.write("ok")
+    except Exception as e:
+        print(
+            f"Remote State Monitor marker error: {e}"
+        )
 
 
 def _file_mtime(path):
@@ -56,6 +68,21 @@ async def _check_remote_state():
         if not message:
             return
 
+        # اگر این محیط هنوز یک State موفق محلی نساخته/بازیابی نکرده،
+        # هرچه در Remote Storage داریم بازیابی می‌کنیم. این حالت برای reset کامل است.
+        if not os.path.exists(READY_MARKER):
+            print(
+                "Remote State Monitor: local readiness marker is missing; "
+                "trying remote restore."
+            )
+
+            restored = await remote_storage.restore_from_remote()
+
+            if restored:
+                mark_remote_state_ready()
+
+            return
+
         remote_time = _remote_updated_at(message)
 
         if remote_time is None:
@@ -72,9 +99,14 @@ async def _check_remote_state():
 
         if not local_times:
             print(
-                "Remote State Monitor: local state is missing; restoring remote state."
+                "Remote State Monitor: local files are missing; restoring remote state."
             )
-            await remote_storage.restore_from_remote()
+
+            restored = await remote_storage.restore_from_remote()
+
+            if restored:
+                mark_remote_state_ready()
+
             return
 
         local_time = max(local_times)
@@ -83,7 +115,11 @@ async def _check_remote_state():
             print(
                 "Remote State Monitor: remote state is newer; restoring it."
             )
-            await remote_storage.restore_from_remote()
+
+            restored = await remote_storage.restore_from_remote()
+
+            if restored:
+                mark_remote_state_ready()
 
     except Exception as e:
         print(
