@@ -7,17 +7,23 @@ from pyrogram import Client
 from bot.database import init_db
 from bot.user_handlers import register as register_users
 from bot.admin_handlers import register as register_admin
-from bot.backup import auto_backup_loop
 
 from bot.remote_storage import (
     start_storage,
     stop_storage,
     restore_from_remote,
     sync_all,
+    start_file_watcher,
 )
 
 
 def load_config():
+
+    if not os.path.exists("config.json"):
+
+        raise RuntimeError(
+            "فایل config.json پیدا نشد."
+        )
 
     with open(
         "config.json",
@@ -32,16 +38,19 @@ def load_config():
     bot_token = os.getenv("BOT_TOKEN")
 
     if not api_id:
+
         raise RuntimeError(
             "API_ID در Environment Variables تنظیم نشده است."
         )
 
     if not api_hash:
+
         raise RuntimeError(
             "API_HASH در Environment Variables تنظیم نشده است."
         )
 
     if not bot_token:
+
         raise RuntimeError(
             "BOT_TOKEN در Environment Variables تنظیم نشده است."
         )
@@ -65,83 +74,102 @@ def load_config():
 
 async def main():
 
-    print("Loading configuration...")
+    app = None
+    storage_started = False
 
-    config = load_config()
-
-    print("Starting Remote Storage...")
-
-    storage_started = await start_storage()
-
-    if storage_started:
+    try:
 
         print(
-            "Checking Remote Storage for previous data..."
+            "Starting Cafe Hermes Bot..."
         )
 
-        restored = await restore_from_remote()
+        initial_config = load_config()
 
-        if restored:
-
-            print(
-                "Remote data restored successfully."
-            )
-
-    else:
+        app = Client(
+            "cafe_hermes_bot",
+            api_id=initial_config["api_id"],
+            api_hash=initial_config["api_hash"],
+            bot_token=initial_config["bot_token"]
+        )
 
         print(
-            "Remote Storage is not available."
+            "Starting Telegram client..."
         )
 
-    print("Initializing database...")
+        await app.start()
 
-    init_db()
+        print(
+            "Telegram client started."
+        )
 
-    print("Starting Cafe Hermes Bot...")
+        print(
+            "Starting Remote Storage..."
+        )
 
-    app = Client(
-        "cafe_hermes_bot",
-        api_id=config["api_id"],
-        api_hash=config["api_hash"],
-        bot_token=config["bot_token"]
-    )
+        storage_started = await start_storage(
+            app
+        )
 
-    register_admin(
-        app,
-        config
-    )
-
-    register_users(
-        app,
-        config
-    )
-
-    await app.start()
-
-    print(
-        "Cafe Hermes Bot started successfully."
-    )
-
-    if storage_started:
-
-        try:
-
-            await sync_all()
-
-        except Exception as e:
+        if storage_started:
 
             print(
-                f"Initial remote sync error: {e}"
+                "Checking Remote Storage "
+                "for previous data..."
             )
 
-    asyncio.create_task(
-        auto_backup_loop(
+            await restore_from_remote()
+
+        else:
+
+            print(
+                "Remote Storage is not available."
+            )
+
+        print(
+            "Loading final configuration..."
+        )
+
+        config = load_config()
+
+        print(
+            "Initializing database..."
+        )
+
+        init_db()
+
+        print(
+            "Registering bot handlers..."
+        )
+
+        register_admin(
             app,
             config
         )
-    )
 
-    try:
+        register_users(
+            app,
+            config
+        )
+
+        if storage_started:
+
+            start_file_watcher()
+
+            try:
+
+                await sync_all(
+                    force=True
+                )
+
+            except Exception as e:
+
+                print(
+                    f"Initial remote sync error: {e}"
+                )
+
+        print(
+            "Cafe Hermes Bot started successfully."
+        )
 
         await asyncio.Event().wait()
 
@@ -150,6 +178,14 @@ async def main():
         print(
             "Stopping bot..."
         )
+
+    except Exception as e:
+
+        print(
+            f"Fatal error: {e}"
+        )
+
+        raise
 
     finally:
 
@@ -161,7 +197,9 @@ async def main():
                     "Final remote synchronization..."
                 )
 
-                await sync_all()
+                await sync_all(
+                    force=True
+                )
 
             except Exception as e:
 
@@ -169,9 +207,27 @@ async def main():
                     f"Final remote sync error: {e}"
                 )
 
-        await app.stop()
+            try:
 
-        await stop_storage()
+                await stop_storage()
+
+            except Exception as e:
+
+                print(
+                    f"Remote Storage stop error: {e}"
+                )
+
+        if app:
+
+            try:
+
+                await app.stop()
+
+            except Exception as e:
+
+                print(
+                    f"Telegram client stop error: {e}"
+                )
 
         print(
             "Cafe Hermes Bot stopped."
