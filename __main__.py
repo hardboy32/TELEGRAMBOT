@@ -8,6 +8,8 @@ from bot.database import init_db
 from bot.user_handlers import register as register_users
 from bot.admin_handlers import register as register_admin
 from bot.store_control import register as register_store_control
+from bot.purchase_display import register as register_purchase_display
+from bot.service_management import register as register_service_management
 
 from bot.remote_storage import (
     start_storage,
@@ -15,6 +17,11 @@ from bot.remote_storage import (
     restore_from_remote,
     sync_all,
     start_file_watcher,
+)
+
+from bot.remote_state_monitor import (
+    start_remote_state_monitor,
+    stop_remote_state_monitor,
 )
 
 
@@ -167,9 +174,17 @@ async def main():
             config
         )
 
-        # قابلیت‌های جدید:
-        # کنترل خرید/تمدید + اشتراک‌های من
         register_store_control(
+            app,
+            config
+        )
+
+        register_purchase_display(
+            app,
+            config
+        )
+
+        register_service_management(
             app,
             config
         )
@@ -189,6 +204,8 @@ async def main():
                 print(
                     f"Initial remote sync error: {e}"
                 )
+
+            start_remote_state_monitor()
 
         print(
             "Cafe Hermes Bot started successfully."
@@ -213,6 +230,16 @@ async def main():
     finally:
 
         if storage_started:
+
+            try:
+
+                await stop_remote_state_monitor()
+
+            except Exception as e:
+
+                print(
+                    f"Remote State Monitor stop error: {e}"
+                )
 
             try:
 
