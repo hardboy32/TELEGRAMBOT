@@ -12,18 +12,20 @@ from bot.purchase_display import register as register_purchase_display
 from bot.service_management import register as register_service_management
 
 from bot.remote_storage import (
-    start_storage,
     stop_storage,
     restore_from_remote,
-    sync_all,
     start_file_watcher,
 )
+from bot.remote_storage_bootstrap import start_storage
 
 from bot.remote_state_monitor import (
     start_remote_state_monitor,
     stop_remote_state_monitor,
     mark_remote_state_ready,
 )
+
+
+# Deployment source marker: this file belongs to the current main branch.
 
 
 def load_config():
@@ -86,7 +88,6 @@ def load_config():
     config["api_hash"] = api_hash
     config["bot_token"] = bot_token
 
-    # مقادیر پیش‌فرض
     if "purchase_open" not in config:
         config["purchase_open"] = True
 
@@ -196,22 +197,6 @@ async def main():
         if storage_started:
 
             start_file_watcher()
-
-            try:
-
-                synced = await sync_all(
-                    force=True
-                )
-
-                if synced:
-                    mark_remote_state_ready()
-
-            except Exception as e:
-
-                print(
-                    f"Initial remote sync error: {e}"
-                )
-
             start_remote_state_monitor()
 
         print(
@@ -246,22 +231,6 @@ async def main():
 
                 print(
                     f"Remote State Monitor stop error: {e}"
-                )
-
-            try:
-
-                print(
-                    "Final remote synchronization..."
-                )
-
-                await sync_all(
-                    force=True
-                )
-
-            except Exception as e:
-
-                print(
-                    f"Final remote sync error: {e}"
                 )
 
             try:

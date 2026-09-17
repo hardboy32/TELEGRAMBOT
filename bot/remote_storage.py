@@ -117,6 +117,10 @@ async def start_storage(app):
             "Remote Storage: connecting to storage channel..."
         )
 
+        # Register the observer BEFORE trying direct lookup so a fresh bot
+        # process can learn the private channel from a channel-post update.
+        await _register_storage_observer(_storage_app)
+
         try:
             _storage_chat = await _storage_app.get_chat(target_id)
         except Exception as e:
@@ -126,8 +130,6 @@ async def start_storage(app):
             _storage_chat = None
 
         if _storage_chat is None:
-            await _register_storage_observer(_storage_app)
-
             print(
                 "Remote Storage: waiting for a new post from the storage channel..."
             )
@@ -136,13 +138,15 @@ async def start_storage(app):
             )
 
             try:
+                # Give Telegram/Pyrogram enough time to deliver the channel post.
+                # The previous 30-second timeout was too short in practice.
                 await asyncio.wait_for(
                     _storage_ready_event.wait(),
-                    timeout=30
+                    timeout=120
                 )
             except asyncio.TimeoutError:
                 print(
-                    "Remote Storage: storage channel was not detected within 30 seconds."
+                    "Remote Storage: storage channel was not detected within 120 seconds."
                 )
                 _storage_started = False
                 return False
