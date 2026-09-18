@@ -3602,7 +3602,7 @@ def register(app, config):
         filters.private & (
             filters.document | filters.video | filters.animation
         ),
-        group=-1
+        group=-2
     )
     async def admin_media(client, message):
 
