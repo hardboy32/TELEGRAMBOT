@@ -895,6 +895,42 @@ def register(app, config):
         step = state.get("step")
 
         # =====================================================
+        # متن آموزش
+        # =====================================================
+
+        if step == "tut_text":
+
+            tutorial_id = state.get("tutorial_id")
+
+            if not tutorial_id:
+                admin_states.pop(user_id, None)
+
+                await message.reply_text(
+                    "❌ آموزش پیدا نشد.",
+                    reply_markup=admin_reply_menu()
+                )
+
+                raise StopPropagation
+
+            update_tutorial_field(
+                tutorial_id,
+                "body_text",
+                text
+            )
+
+            admin_states.pop(
+                user_id,
+                None
+            )
+
+            await message.reply_text(
+                "✅ متن آموزش ذخیره شد.",
+                reply_markup=admin_reply_menu()
+            )
+
+            raise StopPropagation
+
+        # =====================================================
         # ساخت سرویس - نام
         # =====================================================
 
