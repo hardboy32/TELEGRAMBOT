@@ -9,6 +9,8 @@ from pyrogram.types import (
 
 from bot.helpers import admin, format_price, save_config
 from bot.keyboards import main_menu
+from bot.remote_storage import store_media_message
+
 
 from bot.backup import (
     create_backup,
@@ -3642,6 +3644,12 @@ def register(app, config):
 
             await message.reply_text("❌ فایل معتبر نیست.")
             raise StopPropagation
+
+        # Keep a durable copy inside the dedicated Telegram files channel.
+        stored = await store_media_message(message)
+
+        if stored and stored.get("file_id"):
+            file_id = stored["file_id"]
 
         field = "file_id" if step == "tut_file" else "video_file_id"
 
