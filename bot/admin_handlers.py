@@ -89,10 +89,6 @@ def admin_reply_menu():
                 KeyboardButton("📚 مدیریت آموزش")
             ],
             [
-                KeyboardButton("💾 پشتیبان‌گیری"),
-                KeyboardButton("♻️ بازگردانی بکاپ")
-            ],
-            [
                 KeyboardButton("🏠 منوی کاربر")
             ]
         ],
@@ -164,18 +160,6 @@ def admin_panel_keyboard():
                     callback_data="admin_tutorials"
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    "💾 پشتیبان‌گیری",
-                    callback_data="admin_backup"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "♻️ بازگردانی بکاپ",
-                    callback_data="admin_restore"
-                )
-            ]
         ]
     )
 
