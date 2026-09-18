@@ -102,6 +102,7 @@ async def main():
 
     app = None
     storage_started = False
+    restored = False
 
     try:
 
@@ -166,7 +167,7 @@ async def main():
 
         init_db()
 
-        if storage_started and restored:
+        if storage_started:
 
             print(
                 "Remote Storage: creating initial split backups..."
@@ -174,9 +175,12 @@ async def main():
 
             try:
 
-                await sync_all(
+                synced = await sync_all(
                     force=True
                 )
+
+                if synced:
+                    mark_remote_state_ready()
 
             except Exception as e:
 
