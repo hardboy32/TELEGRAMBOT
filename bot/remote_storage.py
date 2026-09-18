@@ -426,9 +426,19 @@ def _cleanup_file(path):
 
 
 async def _get_state_message(
-    chat_id,
-    marker
+    chat_id=None,
+    marker=None
 ):
+    if chat_id is None:
+        chat_id = (
+            _storage_data_chat_id
+            if _storage_data_chat_id is not None
+            else STORAGE_CHAT_ID
+        )
+
+    if marker is None:
+        marker = DB_STATE_MARKER
+
     try:
         chat = await _get_chat_info(
             chat_id
