@@ -15,17 +15,11 @@ CONFIG_PATH = "config.json"
 # Primary/current storage channel = user data.
 STORAGE_CHAT_ID = os.getenv("STORAGE_CHAT_ID")
 
-# Dedicated channels:
-# - STORAGE_CHAT_ID = database/user/business data
-# - STORAGE_CONFIG_CHAT_ID = bot configuration/settings
-# - STORAGE_FILES_CHAT_ID = tutorials, installers, videos, receipts and other media
-STORAGE_CONFIG_CHAT_ID = os.getenv(
-    "STORAGE_CONFIG_CHAT_ID"
-)
-
-STORAGE_FILES_CHAT_ID = os.getenv(
-    "STORAGE_FILES_CHAT_ID"
-)
+# Dedicated private storage channels.
+# These are identifiers, not credentials.
+STORAGE_CHAT_ID = -1004448775237
+STORAGE_CONFIG_CHAT_ID = -1003851272792
+STORAGE_FILES_CHAT_ID = -1004358599764
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
