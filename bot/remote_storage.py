@@ -1272,36 +1272,73 @@ async def restore_from_remote():
 
 
 async def store_media_message(message):
-    """Copy a durable media message into the dedicated files channel.
+    """Store a durable copy of uploaded media in the dedicated files channel.
 
-    Returns the file_id of the copied media and the copied message metadata.
-    Used for tutorial files/videos and payment receipts.
+    Telegram's copyMessage returns only a MessageId, so it does not expose the
+    copied file_id. Instead, send the existing media file_id directly to the
+    dedicated files channel and read the returned Message object.
     """
 
     if not _storage_started:
         return None
 
-    if not message or not getattr(
-        message,
-        "chat",
-        None
-    ):
+    if not message:
         return None
 
-    try:
-        result = await _bot_api(
-            "copyMessage",
-            {
-                "chat_id": _files_chat_id(),
-                "from_chat_id": message.chat.id,
-                "message_id": message.id
-            }
-        )
+    chat_id = _files_chat_id()
+    caption = getattr(
+        message,
+        "caption",
+        None
+    ) or ""
 
-        if not isinstance(
-            result,
-            dict
-        ):
+    try:
+        result = None
+
+        if getattr(message, "document", None):
+            result = await _bot_api(
+                "sendDocument",
+                {
+                    "chat_id": chat_id,
+                    "document": message.document.file_id,
+                    "caption": caption
+                }
+            )
+
+        elif getattr(message, "video", None):
+            result = await _bot_api(
+                "sendVideo",
+                {
+                    "chat_id": chat_id,
+                    "video": message.video.file_id,
+                    "caption": caption
+                }
+            )
+
+        elif getattr(message, "animation", None):
+            result = await _bot_api(
+                "sendAnimation",
+                {
+                    "chat_id": chat_id,
+                    "animation": message.animation.file_id,
+                    "caption": caption
+                }
+            )
+
+        elif getattr(message, "photo", None):
+            result = await _bot_api(
+                "sendPhoto",
+                {
+                    "chat_id": chat_id,
+                    "photo": message.photo.file_id,
+                    "caption": caption
+                }
+            )
+
+        if not isinstance(result, dict):
+            print(
+                "Remote Storage: media upload returned no message object."
+            )
             return None
 
         copied_message_id = (
@@ -1309,59 +1346,34 @@ async def store_media_message(message):
             or result.get("id")
         )
 
-        document = result.get(
-            "document"
-        )
-
-        video = result.get(
-            "video"
-        )
-
-        animation = result.get(
-            "animation"
-        )
-
-        photo = result.get(
-            "photo"
-        )
-
         file_id = None
 
-        if document:
-            file_id = document.get(
-                "file_id"
-            )
+        if result.get("document"):
+            file_id = result["document"].get("file_id")
 
-        elif video:
-            file_id = video.get(
-                "file_id"
-            )
+        elif result.get("video"):
+            file_id = result["video"].get("file_id")
 
-        elif animation:
-            file_id = animation.get(
-                "file_id"
-            )
+        elif result.get("animation"):
+            file_id = result["animation"].get("file_id")
 
-        elif photo and isinstance(
-            photo,
-            list
-        ):
-            if photo:
-                file_id = photo[-1].get(
-                    "file_id"
-                )
+        elif result.get("photo"):
+            photos = result["photo"]
+            if isinstance(photos, list) and photos:
+                file_id = photos[-1].get("file_id")
 
         if not file_id:
-            # copyMessage returns the full message object for supported media.
-            # Keep message_id so future file recovery can still be traced.
             print(
-                "Remote Storage: media copied but no file_id was returned."
+                "Remote Storage: media was uploaded but no file_id was returned."
             )
+            return {
+                "message_id": copied_message_id,
+                "file_id": None
+            }
 
-        else:
-            print(
-                "Remote Storage: media copied to files channel."
-            )
+        print(
+            "Remote Storage: media stored in files channel."
+        )
 
         return {
             "message_id": copied_message_id,
@@ -1370,6 +1382,6 @@ async def store_media_message(message):
 
     except Exception as e:
         print(
-            f"Remote Storage: media copy failed: {e}"
+            f"Remote Storage: media upload failed: {e}"
         )
         return None
