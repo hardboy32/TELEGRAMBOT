@@ -43,6 +43,8 @@ from bot.keyboards import (
     order_admin_keyboard
 )
 
+from bot.remote_storage import store_media_message
+
 from bot.messages import (
     welcome,
     join_required,
@@ -1047,9 +1049,17 @@ def register(app, config):
 
             return
 
+        # Keep a durable copy of the receipt in the dedicated files channel.
+        stored_receipt = await store_media_message(message)
+        receipt_file_id = (
+            stored_receipt.get("file_id")
+            if stored_receipt and stored_receipt.get("file_id")
+            else message.photo.file_id
+        )
+
         set_receipt(
             order_id,
-            message.photo.file_id
+            receipt_file_id
         )
 
         user_states.pop(
