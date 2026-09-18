@@ -15,15 +15,17 @@ CONFIG_PATH = "config.json"
 # Primary/current storage channel = user data.
 STORAGE_CHAT_ID = os.getenv("STORAGE_CHAT_ID")
 
-# Optional dedicated channels. They fall back to the primary storage channel
-# until the admin creates separate channels and supplies these IDs.
+# Dedicated channels:
+# - STORAGE_CHAT_ID = database/user/business data
+# - STORAGE_CONFIG_CHAT_ID = bot configuration/settings
+# - STORAGE_FILES_CHAT_ID = tutorials, installers, videos, receipts and other media
 STORAGE_CONFIG_CHAT_ID = os.getenv(
     "STORAGE_CONFIG_CHAT_ID"
-) or STORAGE_CHAT_ID
+)
 
 STORAGE_FILES_CHAT_ID = os.getenv(
     "STORAGE_FILES_CHAT_ID"
-) or STORAGE_CHAT_ID
+)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -140,6 +142,18 @@ async def start_storage(app):
         )
         return False
 
+    if not STORAGE_CONFIG_CHAT_ID:
+        print(
+            "Remote Storage: STORAGE_CONFIG_CHAT_ID is not configured."
+        )
+        return False
+
+    if not STORAGE_FILES_CHAT_ID:
+        print(
+            "Remote Storage: STORAGE_FILES_CHAT_ID is not configured."
+        )
+        return False
+
     try:
         print(
             "Remote Storage: resolving storage channels automatically..."
@@ -156,6 +170,17 @@ async def start_storage(app):
         files_chat = await _get_chat_info(
             STORAGE_FILES_CHAT_ID
         )
+
+        channel_ids = {
+            data_chat["id"],
+            config_chat["id"],
+            files_chat["id"]
+        }
+
+        if len(channel_ids) != 3:
+            raise RuntimeError(
+                "Storage channels must be three different private channels."
+            )
 
         _storage_data_chat_id = data_chat["id"]
         _storage_config_chat_id = config_chat["id"]
