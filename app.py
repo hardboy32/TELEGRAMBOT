@@ -15,6 +15,7 @@ from bot.remote_storage import (
     stop_storage,
     restore_from_remote,
     start_file_watcher,
+    sync_all,
 )
 from bot.remote_storage_bootstrap import start_storage
 
@@ -164,6 +165,24 @@ async def main():
         )
 
         init_db()
+
+        if storage_started and restored:
+
+            print(
+                "Remote Storage: creating initial split backups..."
+            )
+
+            try:
+
+                await sync_all(
+                    force=True
+                )
+
+            except Exception as e:
+
+                print(
+                    f"Remote Storage: initial split sync error: {e}"
+                )
 
         print(
             "Registering bot handlers..."
