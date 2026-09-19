@@ -1589,10 +1589,21 @@ def register(app, config):
 
         for order in orders:
 
+            order_type = order.get(
+                "order_type",
+                "buy"
+            )
+
+            request_icon = (
+                "🛒"
+                if order_type == "buy"
+                else "🔄"
+            )
+
             rows.append(
                 [
                     InlineKeyboardButton(
-                        f"#{order['id']} | "
+                        f"{request_icon} #{order['id']} | "
                         f"{order['service_name']} | "
                         f"{format_price(order['final_price'])}",
                         callback_data=f"admin_order_{order['id']}"
@@ -1646,8 +1657,26 @@ def register(app, config):
 
             return
 
+        order_type = order.get(
+            "order_type",
+            "buy"
+        )
+
+        request_title = (
+            "🛒 خرید سرویس جدید"
+            if order_type == "buy"
+            else "🔄 تمدید سرویس"
+        )
+
+        request_type = (
+            "خرید جدید"
+            if order_type == "buy"
+            else "تمدید"
+        )
+
         text = (
-            "🧾 جزئیات سفارش\n\n"
+            f"{request_title}\n\n"
+            f"📌 نوع درخواست: {request_type}\n"
             f"🆔 شماره: #{order['id']}\n"
             f"👤 شناسه کاربر: {order['user_id']}\n"
             f"📦 سرویس: {order['service_name']}\n"
