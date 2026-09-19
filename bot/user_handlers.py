@@ -1074,11 +1074,29 @@ def register(app, config):
 
             try:
 
+                order_type = order.get(
+                    "order_type",
+                    "buy"
+                )
+
+                request_title = (
+                    "🛒 درخواست خرید سرویس جدید"
+                    if order_type == "buy"
+                    else "🔄 درخواست تمدید سرویس"
+                )
+
+                request_type = (
+                    "خرید جدید"
+                    if order_type == "buy"
+                    else "تمدید"
+                )
+
                 await client.send_photo(
                     admin_id,
                     message.photo.file_id,
                     caption=(
-                        "🧾 رسید پرداخت جدید\n\n"
+                        f"{request_title}\n\n"
+                        f"📌 نوع درخواست: {request_type}\n"
                         f"🆔 شماره سفارش: #{order['id']}\n"
                         f"👤 شناسه کاربر: <code>{user_id}</code>\n"
                         f"📦 سرویس: {order['service_name']}\n"
