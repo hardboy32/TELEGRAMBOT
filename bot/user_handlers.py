@@ -965,11 +965,13 @@ def register(app, config):
                     discount
                 )
 
+        order_type = state.get("order_type", "buy")
+
         order_id = create_order(
             user_id=user_id,
             service_id=service["id"],
             service_name=service["name"],
-            order_type="buy",
+            order_type=order_type,
             username=state["username"],
             original_price=service["price"],
             discount_percent=discount,
@@ -983,7 +985,7 @@ def register(app, config):
         }
 
         await query.message.edit_text(
-            order_created(order_id)
+            order_created(order_id, order_type)
         )
 
         await query.message.reply_text(
@@ -1307,7 +1309,7 @@ def register(app, config):
         }
 
         await query.message.reply_text(
-            order_created(order_id)
+            order_created(order_id, "renew")
         )
 
         await query.message.reply_text(
