@@ -27,9 +27,19 @@ def payment(card, name):
     )
 
 
-def order_text(service, username, discount, final_price):
+def order_text(service, username, discount, final_price, order_type="buy"):
+    if order_type == "renew":
+        title = "🔄 تمدید سرویس"
+        intro = "اطلاعات تمدید سرویس شما:"
+        action = "اگر اطلاعات صحیح است، روی «✅ تأیید تمدید» بزنید."
+    else:
+        title = "🧾 خرید سرویس"
+        intro = "اطلاعات سرویس انتخابی شما:"
+        action = "اگر اطلاعات صحیح است، روی «✅ تأیید خرید» بزنید."
+
     text = (
-        "🧾 سفارش شما\n\n"
+        f"{title}\n\n"
+        f"{intro}\n\n"
         f"📦 سرویس: {service['name']}\n"
         f"💾 حجم: {service['volume_gb']}GB\n"
         f"👤 نام کاربری: {username}\n\n"
@@ -41,15 +51,22 @@ def order_text(service, username, discount, final_price):
 
     text += (
         f"💵 مبلغ قابل پرداخت: {final_price:,} تومان\n\n"
-        "اگر اطلاعات صحیح است، روی «✅ تأیید سفارش» بزنید."
+        f"{action}"
     )
 
     return text
 
 
-def order_created(order_id):
+def order_created(order_id, order_type="buy"):
+    if order_type == "renew":
+        return (
+            "✅ درخواست تمدید ثبت شد.\n\n"
+            f"🧾 شماره تمدید: #{order_id}\n\n"
+            "💳 مبلغ تمدید را پرداخت کنید و عکس رسید را ارسال کنید."
+        )
+
     return (
-        "✅ سفارش ثبت شد.\n\n"
+        "✅ سفارش خرید ثبت شد.\n\n"
         f"🧾 شماره سفارش: #{order_id}\n\n"
         "💳 مبلغ را پرداخت کنید و عکس رسید را ارسال کنید."
     )
