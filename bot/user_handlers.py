@@ -544,7 +544,8 @@ def register(app, config):
                         service,
                         new_state["username"],
                         discount,
-                        final_price
+                        final_price,
+                        "renew"
                     ),
                     reply_markup=confirm_reply_keyboard()
                 )
@@ -767,7 +768,10 @@ def register(app, config):
                 }
 
                 await message.reply_text(
-                    order_created(order_id)
+                    order_created(
+                        order_id,
+                        state.get("order_type", "buy")
+                    )
                 )
 
                 await message.reply_text(
