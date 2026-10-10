@@ -1,5 +1,6 @@
 import os
 from pyrogram import filters, StopPropagation, enums
+from pyrogram.errors import MessageNotModified
 from pyrogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
@@ -2462,11 +2463,15 @@ def register(app, config):
             ]
         ]
 
-        await query.message.edit_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(rows),
-            parse_mode=enums.ParseMode.HTML
-        )
+        try:
+            await query.message.edit_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(rows),
+                parse_mode=enums.ParseMode.HTML
+            )
+        except MessageNotModified:
+            # وضعیت و متن از قبل یکسان است؛ خطای بی‌ضرر تلگرام را نادیده بگیر.
+            pass
         await query.answer()
 
 
