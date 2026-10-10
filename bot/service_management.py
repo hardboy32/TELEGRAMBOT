@@ -14,6 +14,35 @@ from bot.helpers import admin, format_price
 
 service_states = {}
 
+# پیام‌های منو نباید به‌عنوان ورودی حجم/قیمت سرویس تفسیر شوند.
+_MENU_TEXTS = {
+    "🛒 خرید سرویس",
+    "🔄 تمدید",
+    "📦 اشتراک‌های من",
+    "👥 دعوت دوستان",
+    "🎟️ کد تخفیف",
+    "📜 تاریخچه سفارش‌ها",
+    "👤 حساب من",
+    "☎️ پشتیبانی",
+    "📚 آموزش",
+    "⚙️ پنل مدیریت",
+    "⏸ کنترل فروش",
+    "🎁 تست رایگان",
+    "🎉 جشنواره",
+    "🧾 سفارش‌های در انتظار",
+    "📦 مدیریت سرویس‌ها",
+    "👥 کاربران",
+    "📊 آمار",
+    "🎁 پاداش‌های دعوت",
+    "📢 پیام همگانی",
+    "⚙️ تنظیمات دکمه‌ها",
+    "💳 تنظیمات پرداخت",
+    "📚 مدیریت آموزش",
+    "🏠 منوی کاربر",
+    "⬅️ بازگشت",
+    "❌ لغو",
+}
+
 
 def _digits(value):
     table = str.maketrans(
@@ -165,12 +194,20 @@ def register(app, config):
         if not admin(user_id, config):
             return
 
+        raw_text = message.text.strip()
+
+        # با انتخاب هر دکمه منو، حالت ورود قیمت/حجم قبلی لغو شود
+        # و پیام برای هندلر اصلی خودش باقی بماند.
+        if raw_text in _MENU_TEXTS:
+            service_states.pop(user_id, None)
+            return
+
         state = service_states.get(user_id)
 
         if not state:
             return
 
-        text = _digits(message.text.strip())
+        text = _digits(raw_text)
         action = state.get("action")
 
         if action in ("add_volume", "edit_volume"):
@@ -439,3 +476,12 @@ def register(app, config):
         service_states.pop(query.from_user.id, None)
         await _show_services_callback(query)
         raise StopPropagation
+
+
+    # اگر ادمین از یک مرحله ورود قیمت/حجم به بخش دیگری از پنل رفت،
+    # حالت قبلی پاک شود تا کلیک‌های بعدی به‌عنوان قیمت تفسیر نشوند.
+    @app.on_callback_query(group=-19)
+    async def clear_stale_service_state(client, query):
+        if admin(query.from_user.id, config):
+            service_states.pop(query.from_user.id, None)
+        # عمداً StopPropagation نمی‌کنیم تا هندلر اصلی این دکمه اجرا شود.
