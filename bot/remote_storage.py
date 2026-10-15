@@ -4,6 +4,7 @@ import asyncio
 import sqlite3
 import zipfile
 import shutil
+import time
 from datetime import datetime
 
 import aiohttp
@@ -40,6 +41,10 @@ _storage_files_chat_id = None
 
 _sync_task = None
 _sync_lock = asyncio.Lock()
+
+# Avoid rebuilding/uploading full database archives for every small write.
+MIN_SYNC_INTERVAL = 60
+_last_sync_at = 0.0
 
 _dirty = False
 _last_db_mtime = None
@@ -643,6 +648,7 @@ async def sync_all(force=False):
     global _dirty
     global _db_state_message_id
     global _config_state_message_id
+    global _last_sync_at
 
     if not _storage_started:
         return False
@@ -652,6 +658,7 @@ async def sync_all(force=False):
             return True
 
         _dirty = False
+        _last_sync_at = time.monotonic()
 
         print(
             "Remote Storage: sync started."
@@ -662,6 +669,10 @@ async def sync_all(force=False):
 
         if not db_archive or not config_archive:
             _dirty = True
+            # Archive creation can fail after creating only one file.
+            # Clean both paths here because the upload try/finally has not started yet.
+            _cleanup_file(db_archive or DB_ARCHIVE)
+            _cleanup_file(config_archive or CONFIG_ARCHIVE)
 
             print(
                 "Remote Storage: sync failed while creating archives."
@@ -746,6 +757,14 @@ async def _sync_worker():
             _storage_started
             and _dirty
         ):
+            # Batch frequent database writes; do not create a full archive
+            # more than once per minute during normal background syncing.
+            remaining = MIN_SYNC_INTERVAL - (time.monotonic() - _last_sync_at)
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+                if not _storage_started or not _dirty:
+                    break
+
             await sync_all(
                 force=False
             )
@@ -778,7 +797,7 @@ async def _watch_files():
 
     while _storage_started:
         try:
-            await asyncio.sleep(3)
+            await asyncio.sleep(10)
 
             db_mtime = _mtime(
                 DB_PATH
