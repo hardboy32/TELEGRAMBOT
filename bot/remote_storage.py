@@ -441,16 +441,31 @@ def _cleanup_file(path):
         pass
 
 
-def cleanup_temporary_files():
-    """Remove only known disposable artifacts; the live database is never touched."""
+def cleanup_temporary_files(force=False):
+    """Remove only known disposable artifacts; never touch the live database.
+
+    Periodic cleanup removes only artifacts older than one hour to avoid
+    interfering with an active restore or upload. Startup cleanup may force it.
+    """
+    now = time.time()
+    max_age = 60 * 60
+
     for path in _TEMP_FILES:
-        _cleanup_file(path)
+        try:
+            if not os.path.isfile(path):
+                continue
+            if force or now - os.path.getmtime(path) > max_age:
+                _cleanup_file(path)
+        except OSError:
+            pass
 
     for path in _TEMP_DIRS:
         try:
-            if os.path.isdir(path):
+            if not os.path.isdir(path):
+                continue
+            if force or now - os.path.getmtime(path) > max_age:
                 shutil.rmtree(path, ignore_errors=True)
-        except Exception:
+        except OSError:
             pass
 
 
@@ -776,7 +791,6 @@ async def sync_all(force=False):
         finally:
             _cleanup_file(db_archive)
             _cleanup_file(config_archive)
-            cleanup_temporary_files()
 
 
 def schedule_sync():
