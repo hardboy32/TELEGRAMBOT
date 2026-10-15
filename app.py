@@ -110,7 +110,7 @@ async def main():
     try:
 
         # Remove only known disposable temp files; never touch the live database.
-        cleanup_temporary_files()
+        cleanup_temporary_files(force=True)
 
         print(
             "Starting Cafe Hermes Bot..."
