@@ -16,6 +16,10 @@ from bot.remote_storage import (
     restore_from_remote,
     start_file_watcher,
     sync_all,
+    schedule_sync,
+    cleanup_temporary_files,
+    start_temporary_cleanup,
+    stop_temporary_cleanup,
 )
 from bot.remote_storage_bootstrap import start_storage
 
@@ -106,6 +110,9 @@ async def main():
 
     try:
 
+        # Remove only known disposable temp files; never touch the live database.
+        cleanup_temporary_files()
+
         print(
             "Starting Cafe Hermes Bot..."
         )
@@ -167,27 +174,6 @@ async def main():
 
         init_db()
 
-        if storage_started:
-
-            print(
-                "Remote Storage: creating initial split backups..."
-            )
-
-            try:
-
-                synced = await sync_all(
-                    force=True
-                )
-
-                if synced:
-                    mark_remote_state_ready()
-
-            except Exception as e:
-
-                print(
-                    f"Remote Storage: initial split sync error: {e}"
-                )
-
         print(
             "Registering bot handlers..."
         )
@@ -221,6 +207,11 @@ async def main():
 
             start_file_watcher()
             start_remote_state_monitor()
+            start_temporary_cleanup()
+
+            # Initial backup runs in the background after handlers are ready,
+            # so startup syncing does not delay member-facing responses.
+            schedule_sync()
 
         print(
             "Cafe Hermes Bot started successfully."
@@ -245,6 +236,11 @@ async def main():
     finally:
 
         if storage_started:
+
+            try:
+                await stop_temporary_cleanup()
+            except Exception as e:
+                print(f"Temporary cleanup stop error: {e}")
 
             try:
 
