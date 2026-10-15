@@ -16,7 +16,6 @@ from bot.remote_storage import (
     restore_from_remote,
     start_file_watcher,
     sync_all,
-    schedule_sync,
     cleanup_temporary_files,
     start_temporary_cleanup,
     stop_temporary_cleanup,
@@ -211,7 +210,15 @@ async def main():
 
             # Initial backup runs in the background after handlers are ready,
             # so startup syncing does not delay member-facing responses.
-            schedule_sync()
+            async def initial_remote_sync():
+                try:
+                    synced = await sync_all(force=True)
+                    if synced:
+                        mark_remote_state_ready()
+                except Exception as e:
+                    print(f"Remote Storage: initial background sync error: {e}")
+
+            asyncio.create_task(initial_remote_sync())
 
         print(
             "Cafe Hermes Bot started successfully."
