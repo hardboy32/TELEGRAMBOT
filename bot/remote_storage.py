@@ -41,6 +41,23 @@ _storage_files_chat_id = None
 
 _sync_task = None
 _sync_lock = asyncio.Lock()
+_cleanup_task = None
+
+# Only these generated temporary paths are disposable. Never remove DB_PATH,
+# remote archives in Telegram, or the pre-restore recovery copy.
+_TEMP_FILES = (
+    "data/.remote_database_snapshot.db",
+    "data/.remote_db_state.zip",
+    "data/.remote_config_state.zip",
+    "data/.remote_state.zip",
+    "data/.remote_config_snapshot.json",
+    "data/.remote_restore_tmp.zip",
+)
+_TEMP_DIRS = (
+    "data/.remote_db_restore",
+    "data/.remote_config_restore",
+    "data/.remote_state_restore",
+)
 
 # Avoid rebuilding/uploading full database archives for every small write.
 MIN_SYNC_INTERVAL = 60
@@ -418,10 +435,60 @@ def _create_config_archive():
 
 def _cleanup_file(path):
     try:
-        if os.path.exists(path):
+        if path and os.path.exists(path):
             os.remove(path)
     except Exception:
         pass
+
+
+def cleanup_temporary_files():
+    """Remove only known disposable artifacts; the live database is never touched."""
+    for path in _TEMP_FILES:
+        _cleanup_file(path)
+
+    for path in _TEMP_DIRS:
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+        except Exception:
+            pass
+
+
+async def _temporary_cleanup_worker():
+    while True:
+        try:
+            await asyncio.sleep(30 * 60)
+            cleanup_temporary_files()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"Temporary cleanup error: {e}")
+            await asyncio.sleep(60)
+
+
+def start_temporary_cleanup():
+    global _cleanup_task
+    if _cleanup_task and not _cleanup_task.done():
+        return
+    try:
+        _cleanup_task = asyncio.get_running_loop().create_task(
+            _temporary_cleanup_worker()
+        )
+        print("Temporary cleanup scheduled every 30 minutes.")
+    except RuntimeError:
+        _cleanup_task = None
+
+
+async def stop_temporary_cleanup():
+    global _cleanup_task
+    task = _cleanup_task
+    _cleanup_task = None
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 async def _get_state_message(
@@ -660,65 +727,56 @@ async def sync_all(force=False):
         _dirty = False
         _last_sync_at = time.monotonic()
 
-        print(
-            "Remote Storage: sync started."
-        )
+        print("Remote Storage: sync started.")
 
-        db_archive = _create_db_archive()
-        config_archive = _create_config_archive()
-
-        if not db_archive or not config_archive:
-            _dirty = True
-            # Archive creation can fail after creating only one file.
-            # Clean both paths here because the upload try/finally has not started yet.
-            _cleanup_file(db_archive or DB_ARCHIVE)
-            _cleanup_file(config_archive or CONFIG_ARCHIVE)
-
-            print(
-                "Remote Storage: sync failed while creating archives."
-            )
-
-            return False
+        db_archive = None
+        config_archive = None
 
         try:
-            _db_state_message_id = (
-                await _create_or_replace_channel_state(
-                    _data_chat_id(),
-                    DB_STATE_MARKER,
-                    "database / users / orders / subscriptions / services / coupons",
-                    db_archive,
-                    _db_state_message_id
-                )
+            # Create one archive at a time and offload SQLite/compression work
+            # from the Telegram event loop. This lowers peak disk use and keeps
+            # member-facing handlers responsive.
+            db_archive = await asyncio.to_thread(_create_db_archive)
+            if not db_archive:
+                raise RuntimeError("Could not create database archive.")
+
+            _db_state_message_id = await _create_or_replace_channel_state(
+                _data_chat_id(),
+                DB_STATE_MARKER,
+                "database / users / orders / subscriptions / services / coupons",
+                db_archive,
+                _db_state_message_id
             )
 
-            _config_state_message_id = (
-                await _create_or_replace_channel_state(
-                    _config_chat_id(),
-                    CONFIG_STATE_MARKER,
-                    "bot settings and configuration",
-                    config_archive,
-                    _config_state_message_id
-                )
+            # The database archive is no longer needed after Telegram confirms
+            # the upload/edit. Delete it before creating the next archive.
+            _cleanup_file(db_archive)
+            db_archive = None
+
+            config_archive = await asyncio.to_thread(_create_config_archive)
+            if not config_archive:
+                raise RuntimeError("Could not create config archive.")
+
+            _config_state_message_id = await _create_or_replace_channel_state(
+                _config_chat_id(),
+                CONFIG_STATE_MARKER,
+                "bot settings and configuration",
+                config_archive,
+                _config_state_message_id
             )
 
-            print(
-                "Remote Storage: sync completed."
-            )
-
+            print("Remote Storage: sync completed.")
             return True
 
         except Exception as e:
             _dirty = True
-
-            print(
-                f"Remote Storage: sync failed: {e}"
-            )
-
+            print(f"Remote Storage: sync failed: {e}")
             return False
 
         finally:
             _cleanup_file(db_archive)
             _cleanup_file(config_archive)
+            cleanup_temporary_files()
 
 
 def schedule_sync():
