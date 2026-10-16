@@ -28,7 +28,7 @@ DB_STATE_MARKER = "CAFE_HERMES_DB_STATE"
 CONFIG_STATE_MARKER = "CAFE_HERMES_CONFIG_STATE"
 LEGACY_STATE_MARKER = "CAFE_HERMES_STATE"
 
-DB_ARCHIVE = "data/.remote_db_state.zip"
+DB_ARCHIVE = "data/.remote_db_state.db"
 CONFIG_ARCHIVE = "data/.remote_config_state.zip"
 LEGACY_ARCHIVE = "data/.remote_state.zip"
 
@@ -47,7 +47,9 @@ _cleanup_task = None
 # remote archives in Telegram, or the pre-restore recovery copy.
 _TEMP_FILES = (
     "data/.remote_database_snapshot.db",
+    "data/.remote_db_state.db",
     "data/.remote_db_state.zip",
+    "data/.remote_db_download.tmp",
     "data/.remote_config_state.zip",
     "data/.remote_state.zip",
     "data/.remote_config_snapshot.json",
@@ -325,55 +327,37 @@ def _sanitized_config():
 
 
 def _create_db_archive():
+    """Create a consistent SQLite backup without making a second ZIP copy.
+
+    Keeping only one temporary database copy greatly reduces peak disk usage.
+    The restore path below remains compatible with older ZIP backups.
+    """
     if not os.path.exists(DB_PATH):
         return None
 
-    os.makedirs(
-        "data",
-        exist_ok=True
-    )
-
-    snapshot_path = (
-        "data/.remote_database_snapshot.db"
-    )
+    os.makedirs("data", exist_ok=True)
 
     try:
-        if os.path.exists(DB_ARCHIVE):
-            os.remove(DB_ARCHIVE)
+        _cleanup_file(DB_ARCHIVE)
 
-        source = sqlite3.connect(DB_PATH)
-        destination = sqlite3.connect(snapshot_path)
+        source = sqlite3.connect(DB_PATH, timeout=30)
+        destination = sqlite3.connect(DB_ARCHIVE, timeout=30)
 
         try:
             source.backup(destination)
+            result = destination.execute("PRAGMA integrity_check").fetchone()
+            if not result or result[0] != "ok":
+                raise RuntimeError("Database backup failed integrity_check.")
         finally:
             destination.close()
             source.close()
 
-        with zipfile.ZipFile(
-            DB_ARCHIVE,
-            "w",
-            compression=zipfile.ZIP_DEFLATED
-        ) as archive:
-            archive.write(
-                snapshot_path,
-                arcname="cafe_hermes.db"
-            )
-
         return DB_ARCHIVE
 
     except Exception as e:
-        print(
-            f"Remote database archive error: {e}"
-        )
+        print(f"Remote database archive error: {e}")
+        _cleanup_file(DB_ARCHIVE)
         return None
-
-    finally:
-        try:
-            if os.path.exists(snapshot_path):
-                os.remove(snapshot_path)
-        except Exception:
-            pass
 
 
 def _create_config_archive():
@@ -1070,50 +1054,57 @@ def _cleanup_extract_root(
         pass
 
 
-async def _restore_database_from_message(
-    message
-):
-    extract_root = (
-        "data/.remote_db_restore"
-    )
+async def _restore_database_from_message(message):
+    """Restore either the new raw SQLite backup or a legacy ZIP backup."""
+    extract_root = "data/.remote_db_restore"
+    temp_download = "data/.remote_db_download.tmp"
+    recovery_copy = "data/cafe_hermes_before_restore.db"
 
-    await _restore_archive(
-        message,
-        "cafe_hermes.db",
-        extract_root
-    )
+    _cleanup_file(temp_download)
+    await _download_document(message, temp_download)
 
-    extracted_db = os.path.join(
-        extract_root,
-        "cafe_hermes.db"
-    )
+    extracted_db = temp_download
+    try:
+        if zipfile.is_zipfile(temp_download):
+            _cleanup_extract_root(extract_root)
+            os.makedirs(extract_root, exist_ok=True)
+            with zipfile.ZipFile(temp_download, "r") as archive:
+                if "cafe_hermes.db" not in set(archive.namelist()):
+                    raise RuntimeError("Remote ZIP backup has no database.")
+                archive.extract("cafe_hermes.db", extract_root)
+            extracted_db = os.path.join(extract_root, "cafe_hermes.db")
 
-    if not os.path.exists(
-        extracted_db
-    ):
-        raise RuntimeError(
-            "Restored database is missing."
-        )
+        if not os.path.isfile(extracted_db):
+            raise RuntimeError("Restored database is missing.")
 
-    if os.path.exists(
-        DB_PATH
-    ):
+        # Validate the downloaded database before replacing the live one.
+        check = sqlite3.connect(extracted_db, timeout=30)
         try:
-            os.replace(
-                DB_PATH,
-                "data/cafe_hermes_before_restore.db"
-            )
+            result = check.execute("PRAGMA integrity_check").fetchone()
+            if not result or result[0] != "ok":
+                raise RuntimeError("Remote database failed integrity_check.")
+        finally:
+            check.close()
+
+        # Keep one recovery copy during replacement only; remove it after the
+        # restored database is in place to avoid permanently doubling disk use.
+        _cleanup_file(recovery_copy)
+        if os.path.exists(DB_PATH):
+            os.replace(DB_PATH, recovery_copy)
+
+        try:
+            os.replace(extracted_db, DB_PATH)
         except Exception:
-            pass
+            if os.path.exists(recovery_copy) and not os.path.exists(DB_PATH):
+                os.replace(recovery_copy, DB_PATH)
+            raise
 
-    os.replace(
-        extracted_db,
-        DB_PATH
-    )
+        _cleanup_file(recovery_copy)
+        print("Remote Storage: temporary restore files cleaned up.")
 
-    _cleanup_extract_root(
-        extract_root
-    )
+    finally:
+        _cleanup_file(temp_download)
+        _cleanup_extract_root(extract_root)
 
 
 async def _restore_config_from_message(
