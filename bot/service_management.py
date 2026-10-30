@@ -12,7 +12,9 @@ from bot.database import (
 from bot.helpers import admin, format_price
 
 
-service_states = {}
+from bot.state_store import PersistentStateMap
+
+service_states = PersistentStateMap("service_admin", ttl_seconds=24 * 60 * 60)
 
 # پیام‌های منو نباید به‌عنوان ورودی حجم/قیمت سرویس تفسیر شوند.
 _MENU_TEXTS = {
