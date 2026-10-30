@@ -884,9 +884,49 @@ def update_order_status(order_id, status):
 
     conn = get_connection()
     cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
+    order = cur.execute(
+        "SELECT status, coupon FROM orders WHERE id = ?",
+        (order_id,)
+    ).fetchone()
+    if not order:
+        conn.rollback()
+        conn.close()
+        return False
+    if order["status"] == "pending":
+        conn.commit()
+        conn.close()
+        return True
+    if order["status"] != "rejected":
+        conn.rollback()
+        conn.close()
+        return False
+
+    # Reopening a rejected order must reserve its coupon use again.
+    if order["coupon"]:
+        coupon = cur.execute("""
+            SELECT id FROM coupons
+            WHERE code = ? AND active = 1
+              AND (expires_at IS NULL OR expires_at = '' OR expires_at >= ?)
+              AND (max_uses = 0 OR used_count < max_uses)
+        """, (str(order["coupon"]).upper(), now())).fetchone()
+        if not coupon:
+            conn.rollback()
+            conn.close()
+            return False
+        cur.execute("""
+            UPDATE coupons SET used_count = used_count + 1
+            WHERE id = ? AND active = 1
+              AND (max_uses = 0 OR used_count < max_uses)
+        """, (coupon["id"],))
+        if cur.rowcount != 1:
+            conn.rollback()
+            conn.close()
+            return False
+
     cur.execute("""
         UPDATE orders SET status = 'pending'
-        WHERE id = ? AND status IN ('pending', 'rejected')
+        WHERE id = ? AND status = 'rejected'
     """, (order_id,))
     changed = cur.rowcount
     conn.commit()
