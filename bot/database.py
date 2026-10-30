@@ -787,49 +787,42 @@ def create_coupon(
 
 def get_coupon(code):
     conn = get_connection()
-
     row = conn.execute("""
-        SELECT *
-        FROM coupons
-        WHERE code = ?
-          AND active = 1
-    """, (code.upper(),)).fetchone()
-
+        SELECT * FROM coupons
+        WHERE code = ? AND active = 1
+          AND (expires_at IS NULL OR expires_at = '' OR expires_at >= ?)
+          AND (max_uses = 0 OR used_count < max_uses)
+    """, (code.upper(), now())).fetchone()
     conn.close()
-
     return dict(row) if row else None
 
 
 def use_coupon(code):
     conn = get_connection()
-
     cur = conn.cursor()
-
+    cur.execute("BEGIN IMMEDIATE")
     row = cur.execute("""
-        SELECT *
-        FROM coupons
-        WHERE code = ?
-          AND active = 1
-    """, (code.upper(),)).fetchone()
-
+        SELECT * FROM coupons
+        WHERE code = ? AND active = 1
+          AND (expires_at IS NULL OR expires_at = '' OR expires_at >= ?)
+          AND (max_uses = 0 OR used_count < max_uses)
+    """, (code.upper(), now())).fetchone()
     if not row:
+        conn.rollback()
         conn.close()
         return False
-
-    if row["max_uses"] > 0 and row["used_count"] >= row["max_uses"]:
-        conn.close()
-        return False
-
     cur.execute("""
-        UPDATE coupons
-        SET used_count = used_count + 1
-        WHERE id = ?
+        UPDATE coupons SET used_count = used_count + 1
+        WHERE id = ? AND active = 1
+          AND (max_uses = 0 OR used_count < max_uses)
     """, (row["id"],))
-
-    conn.commit()
+    ok = cur.rowcount == 1
+    if ok:
+        conn.commit()
+    else:
+        conn.rollback()
     conn.close()
-
-    return True
+    return ok
 
 
 def deactivate_coupon(code):
