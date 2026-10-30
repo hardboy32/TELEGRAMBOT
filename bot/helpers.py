@@ -5,7 +5,9 @@ import json
 SECRET_CONFIG_KEYS = (
     "api_id",
     "api_hash",
-    "bot_token"
+    "bot_token",
+    "payment_card",
+    "payment_name"
 )
 
 
