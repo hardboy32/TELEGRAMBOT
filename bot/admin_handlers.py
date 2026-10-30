@@ -46,6 +46,7 @@ from bot.database import (
     get_user_orders,
     get_user_subscriptions,
     get_subscription,
+    get_subscription_by_order,
     delete_order,
     update_order_status,
     delete_subscription,
@@ -1172,6 +1173,13 @@ def register(app, config):
                 )
                 raise StopPropagation
 
+            if get_subscription_by_order(order_id):
+                admin_states.pop(user_id, None)
+                await message.reply_text(
+                    f"⚠️ برای سفارش #{order_id} قبلاً اشتراک ثبت شده است؛ کانفیگ تکراری ارسال نشد."
+                )
+                raise StopPropagation
+
             config_text = text
 
             save_subscription(
@@ -2065,6 +2073,13 @@ def register(app, config):
                 or not str(order.get("receipt_file_id") or "").strip()):
             await query.answer(
                 "⛔ ابتدا باید رسید سفارش ثبت و پرداخت آن تأیید شود.",
+                show_alert=True
+            )
+            return
+
+        if get_subscription_by_order(order_id):
+            await query.answer(
+                "برای این سفارش قبلاً اشتراک ثبت شده است.",
                 show_alert=True
             )
             return
