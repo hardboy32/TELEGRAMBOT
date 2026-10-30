@@ -33,6 +33,14 @@ def main_menu(config, is_admin=False):
         )
 
     if config.get(
+        "status_enabled",
+        True
+    ):
+        buttons.append(
+            KeyboardButton("📊 وضعیت اشتراک")
+        )
+
+    if config.get(
         "referral_enabled",
         True
     ):
