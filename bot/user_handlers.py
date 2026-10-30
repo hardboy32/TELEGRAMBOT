@@ -1533,11 +1533,19 @@ def register(app, config):
             order_created(order_id, "renew")
         )
 
+        order = get_order(order_id)
+        expected = (
+            order.get("expected_total", order.get("final_price", service["price"]))
+            if order else service["price"]
+        )
         await query.message.reply_text(
-            payment(
+            f"💰 مبلغ قابل پرداخت با احتساب مانده حساب: {format_price(expected)} تومان\n\n"
+            + payment(
                 config.get("payment_card", "YOUR_CARD"),
                 config.get("payment_name", "CARD_OWNER")
-            )
+            ),
+            parse_mode=enums.ParseMode.HTML,
+            reply_markup=payment_reply_keyboard(admin(user_id, config))
         )
 
         await query.answer()
