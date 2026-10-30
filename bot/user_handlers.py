@@ -1157,8 +1157,11 @@ def register(app, config):
                         f"💰 قیمت اصلی: "
                         f"{format_price(order['original_price'])} تومان\n"
                         f"🎟️ تخفیف: {order['discount_percent']}%\n"
-                        f"💵 مبلغ نهایی: "
+                        f"💵 مبلغ سرویس پس از تخفیف: "
                         f"{format_price(order['final_price'])} تومان\n"
+                        f"📒 مانده قبلی حساب: {format_price(abs(order.get('balance_before', 0)))} تومان "
+                        f"({'بدهکار' if order.get('balance_before', 0) > 0 else ('بستانکار' if order.get('balance_before', 0) < 0 else 'تسویه')})\n"
+                        f"💰 مبلغ مورد انتظار: {format_price(order.get('expected_total', order['final_price']))} تومان\n"
                         f"🔵 وضعیت: {order['status']}\n"
                         f"📅 تاریخ: {order['created_at']}"
                     ),
