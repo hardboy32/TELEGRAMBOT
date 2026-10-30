@@ -77,6 +77,18 @@ class OrderCouponLifecycleTests(unittest.TestCase):
         self.assertFalse(database.update_order_status(order_id, "pending"))
         self.assertEqual(self._coupon_used_count(), 1)
 
+    def test_existing_user_can_receive_first_referral_attribution(self):
+        database.add_or_update_user(100, "invited", "Invited")
+        database.add_or_update_user(100, "invited", "Invited", referral_by=200)
+
+        self.assertEqual(database.get_referrer(100), 200)
+
+    def test_existing_referral_attribution_cannot_be_overwritten(self):
+        database.add_or_update_user(100, "invited", "Invited", referral_by=200)
+        database.add_or_update_user(100, "invited", "Invited", referral_by=300)
+
+        self.assertEqual(database.get_referrer(100), 200)
+
 
 if __name__ == "__main__":
     unittest.main()
