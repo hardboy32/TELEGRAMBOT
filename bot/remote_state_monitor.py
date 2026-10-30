@@ -1,5 +1,6 @@
 import asyncio
 import os
+import json
 import re
 from datetime import datetime
 
@@ -22,7 +23,7 @@ def _reload_runtime_config():
 
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            restored = __import__("json").load(f)
+            restored = json.load(f)
         if isinstance(restored, dict):
             for key, value in restored.items():
                 if key not in ("api_id", "api_hash", "bot_token", "payment_card", "payment_name"):
