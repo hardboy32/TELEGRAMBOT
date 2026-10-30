@@ -63,7 +63,8 @@ from bot.database import (
     create_invoice,
     get_invoice,
     get_user_invoices,
-    mark_invoice_paid
+    mark_invoice_paid,
+    record_invoice_partial_payment
 )
 
 
@@ -890,6 +891,42 @@ def register(app, config):
             raise StopPropagation
 
         state = admin_states.get(user_id)
+
+        if state and state.get("step") == "invoice_partial_amount":
+            try:
+                amount = int(text.replace(",", "").replace("٬", ""))
+                if amount <= 0:
+                    raise ValueError("مبلغ باید بیشتر از صفر باشد.")
+                result = record_invoice_partial_payment(
+                    state["invoice_id"], amount, created_by=user_id
+                )
+                if not result:
+                    raise ValueError("فاکتور دیگر در انتظار پرداخت نیست.")
+            except ValueError as e:
+                await message.reply_text(str(e) or "مبلغ معتبر نیست.")
+                raise StopPropagation
+            invoice_id = state["invoice_id"]
+            admin_states.pop(user_id, None)
+            if result["completed"]:
+                await message.reply_text(f"✅ فاکتور #{invoice_id} کامل تسویه شد.")
+                try:
+                    await client.send_message(result["user_id"], f"✅ فاکتور #{invoice_id} به‌طور کامل تسویه شد.")
+                except Exception:
+                    pass
+            else:
+                await message.reply_text(
+                    f"✅ پرداخت جزئی ثبت شد.\nپرداخت‌شده: {format_price(result['paid_amount'])} تومان\n"
+                    f"مانده فاکتور: {format_price(result['remaining'])} تومان"
+                )
+                try:
+                    await client.send_message(
+                        result["user_id"],
+                        f"💳 پرداخت جزئی فاکتور #{invoice_id} ثبت شد.\n"
+                        f"مانده قابل پرداخت: {format_price(result['remaining'])} تومان"
+                    )
+                except Exception:
+                    pass
+            raise StopPropagation
 
         if state and state.get("step") == "ledger_amount":
             try:
@@ -2578,6 +2615,22 @@ def register(app, config):
         except Exception as e:
             await query.message.reply_text(f"فاکتور #{invoice_id} ساخته شد اما ارسال پیام ناموفق بود: {e}")
         await query.answer("فاکتور ساخته شد.")
+
+    @app.on_callback_query(filters.regex(r"^admin_invoice_partial_\d+$"))
+    async def admin_invoice_partial(client, query):
+        if not admin(query.from_user.id, config):
+            await query.answer("دسترسی ندارید.", show_alert=True)
+            return
+        invoice_id = int(query.data.split("_")[-1])
+        invoice = get_invoice(invoice_id)
+        if not invoice or invoice.get("status") != "pending" or not invoice.get("approval_required", 1):
+            await query.answer("فاکتور برای ثبت پرداخت جزئی معتبر نیست.", show_alert=True)
+            return
+        admin_states[query.from_user.id] = {
+            "step": "invoice_partial_amount", "invoice_id": invoice_id
+        }
+        await query.message.reply_text("مبلغی را که در این رسید پرداخت شده، به تومان وارد کنید:")
+        await query.answer()
 
     @app.on_callback_query(filters.regex(r"^admin_invoice_approve_\d+$"))
     async def admin_invoice_approve(client, query):
