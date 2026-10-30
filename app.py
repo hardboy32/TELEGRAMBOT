@@ -15,6 +15,8 @@ from bot.service_management import register as register_service_management
 from bot.remote_storage import (
     stop_storage,
     restore_from_remote,
+    database_is_usable,
+    storage_enabled,
     start_file_watcher,
     sync_all,
     cleanup_temporary_files,
@@ -167,6 +169,19 @@ async def main():
         )
 
         config = load_config()
+
+        print(
+            "Checking local database..."
+        )
+
+        # Never let init_db() silently create a fresh empty database when a
+        # configured remote backup should contain the user's existing data.
+        if storage_enabled() and not database_is_usable():
+            raise RuntimeError(
+                "دیتابیس محلی وجود ندارد یا سالم نیست و نسخه معتبر قابل بازیابی "
+                "از تلگرام تأیید نشده است؛ برای جلوگیری از شروع با اطلاعات خالی، "
+                "ربات متوقف شد. بکاپ تلگرام و دسترسی کانال‌های ذخیره‌سازی را بررسی کنید."
+            )
 
         print(
             "Initializing database..."

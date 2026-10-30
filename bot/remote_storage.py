@@ -1303,81 +1303,136 @@ async def _restore_legacy_combined_state():
     return False
 
 
+def database_is_usable():
+    """Return True only when the existing SQLite database is readable and has
+    the core user table. Open in read-only mode so a missing DB is never created.
+    """
+    if not os.path.isfile(DB_PATH) or os.path.getsize(DB_PATH) <= 0:
+        return False
+
+    connection = None
+    try:
+        absolute_path = os.path.abspath(DB_PATH)
+        connection = sqlite3.connect(
+            f"file:{absolute_path}?mode=ro",
+            uri=True,
+            timeout=10
+        )
+        integrity = connection.execute(
+            "PRAGMA integrity_check"
+        ).fetchone()
+        if not integrity or integrity[0] != "ok":
+            return False
+
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'users' LIMIT 1"
+        ).fetchone()
+        return table is not None
+
+    except (sqlite3.Error, OSError):
+        return False
+
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _backup_message_timestamp(message):
+    if not isinstance(message, dict):
+        return None
+
+    caption = message.get("caption") or message.get("text") or ""
+    import re
+
+    match = re.search(
+        r"(?:Backup time|Updated):\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})",
+        caption
+    )
+    if not match:
+        return None
+
+    try:
+        return datetime.strptime(
+            match.group(1),
+            "%Y-%m-%d %H:%M:%S"
+        ).timestamp()
+    except ValueError:
+        return None
+
+
 async def restore_from_remote():
+    """Restore only when local data is missing, invalid, or older than the
+    pinned remote snapshot. A valid local DB is not downloaded/replaced on
+    every restart.
+    """
     if not _storage_started:
         return False
 
-    print(
-        "Remote Storage: checking remote state..."
-    )
-
-    restored_any = False
+    print("Remote Storage: checking local and remote state...")
 
     try:
         db_message = await _get_state_message(
             _data_chat_id(),
             DB_STATE_MARKER
         )
-
         config_message = await _get_state_message(
             _config_chat_id(),
             CONFIG_STATE_MARKER
         )
 
-        if db_message:
-            try:
-                await _restore_database_from_message(
-                    db_message
-                )
-                restored_any = True
-                print(
-                    "Remote Storage: database restored."
-                )
-            except Exception as e:
-                print(
-                    f"Remote database restore error: {e}"
-                )
+        local_db_valid = database_is_usable()
+        should_restore_db = not local_db_valid
 
+        if local_db_valid and db_message:
+            remote_time = _backup_message_timestamp(db_message)
+            local_time = _mtime(DB_PATH)
+            # Only prefer the remote copy when its timestamp clearly proves
+            # it is newer. Missing/legacy timestamps never overwrite a valid DB.
+            should_restore_db = bool(
+                remote_time is not None
+                and local_time is not None
+                and remote_time > local_time + 30
+            )
+
+        if should_restore_db:
+            if db_message:
+                print("Remote Storage: local database is missing/invalid or stale; restoring Telegram snapshot.")
+                await _restore_database_from_message(db_message)
+            else:
+                print("Remote Storage: no pinned database snapshot; checking legacy combined backup.")
+                legacy_restored = await _restore_legacy_combined_state()
+                if not legacy_restored:
+                    print("Remote Storage: no usable database backup exists.")
+                    return False
+
+            if not database_is_usable():
+                raise RuntimeError(
+                    "Downloaded/restored database failed validation; local data was not accepted."
+                )
+            print("Remote Storage: database restored and validated.")
+
+        elif local_db_valid:
+            print("Remote Storage: local database is healthy; keeping it without downloading a copy.")
+
+        # Keep the existing remote configuration behavior. The config archive
+        # is small and contains only non-secret settings; payment credentials
+        # remain in the SQLite database.
         if config_message:
             try:
-                await _restore_config_from_message(
-                    config_message
-                )
-                restored_any = True
-                print(
-                    "Remote Storage: configuration restored."
-                )
+                await _restore_config_from_message(config_message)
+                print("Remote Storage: configuration restored.")
             except Exception as e:
-                print(
-                    f"Remote config restore error: {e}"
-                )
+                print(f"Remote config restore error: {e}")
 
-        if restored_any:
-            print(
-                "Remote state restored successfully."
-            )
-            return True
+        if not database_is_usable():
+            print("Remote Storage: refusing startup because no healthy database is available.")
+            return False
 
-        legacy_restored = (
-            await _restore_legacy_combined_state()
-        )
-
-        if legacy_restored:
-            print(
-                "Remote state restored successfully "
-                "from legacy combined backup."
-            )
-            return True
-
-        print(
-            "Remote Storage: no remote state backup found."
-        )
-        return False
+        return True
 
     except Exception as e:
-        print(
-            f"Remote state restore error: {e}"
-        )
+        print(f"Remote state restore error: {e}")
         return False
 
 
