@@ -22,7 +22,10 @@ from bot.database import (
     get_tutorial,
     get_invoice,
     set_invoice_receipt,
-    mark_invoice_paid
+    mark_invoice_paid,
+    get_customer_balance,
+    get_customer_ledger,
+    get_user_invoices
 )
 
 from bot.helpers import (
@@ -381,16 +384,46 @@ def register(app, config):
             return
 
         if text == "👤 حساب من":
-
-            user = get_user(user_id)
-
-            await message.reply_text(
-                "👤 حساب شما\n\n"
-                f"🆔 شناسه: {user_id}\n"
-                f"👤 نام کاربری: {user.get('username') or 'ندارد'}\n"
-                f"📅 عضویت: {user.get('joined_at')}"
-            )
-
+            user = get_user(user_id) or {}
+            balance = get_customer_balance(user_id)
+            label = "بدهکار" if balance > 0 else ("بستانکار" if balance < 0 else "تسویه")
+            lines = [
+                "👤 حساب شما",
+                "",
+                f"🆔 شناسه: {user_id}",
+                f"👤 نام کاربری: {user.get('username') or 'ندارد'}",
+                f"📅 عضویت: {user.get('joined_at') or '—'}",
+                f"💰 مانده حساب: {format_price(abs(balance))} تومان ({label})",
+            ]
+            entries = get_customer_ledger(user_id, 5)
+            if entries:
+                lines.extend(["", "📒 آخرین گردش حساب:"])
+                for item in entries:
+                    sign = "+" if item["amount"] > 0 else "−"
+                    lines.append(
+                        f"{sign}{format_price(abs(item['amount']))} تومان | "
+                        f"{item['description']} | {item['created_at']}"
+                    )
+            invoices = get_user_invoices(user_id, 10)
+            pending = [x for x in invoices if x.get("status") == "pending"]
+            if pending:
+                lines.extend(["", "🧾 فاکتورهای پرداخت‌نشده:"])
+                rows = []
+                for invoice in pending:
+                    lines.append(
+                        f"#{invoice['id']} {invoice['title']} — "
+                        f"{format_price(invoice['total_amount'])} تومان"
+                    )
+                    rows.append([InlineKeyboardButton(
+                        f"💳 پرداخت فاکتور #{invoice['id']}",
+                        callback_data=f"invoice_pay_{invoice['id']}"
+                    )])
+                await message.reply_text(
+                    "\n".join(lines),
+                    reply_markup=InlineKeyboardMarkup(rows)
+                )
+            else:
+                await message.reply_text("\n".join(lines))
             return
 
         if text == "☎️ پشتیبانی":
