@@ -864,6 +864,19 @@ def get_user_subscriptions(user_id):
     return [dict(row) for row in rows]
 
 
+def get_active_subscriptions():
+    """Return active subscriptions with their owner IDs for background checks."""
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT * FROM subscriptions
+        WHERE status = 'active' AND subscription_url IS NOT NULL
+          AND TRIM(subscription_url) != ''
+        ORDER BY user_id, id
+    """).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 def get_subscription(subscription_id):
     conn = get_connection()
 
