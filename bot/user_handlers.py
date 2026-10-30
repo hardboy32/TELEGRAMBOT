@@ -1096,9 +1096,10 @@ def register(app, config):
                     await client.send_photo(
                         admin_id, message.photo.file_id,
                         caption=f"رسید فاکتور #{invoice_id} | مشتری {user_id} | مبلغ {format_price(invoice['total_amount'])} تومان",
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("✅ تأیید پرداخت", callback_data=f"admin_invoice_approve_{invoice_id}")
-                        ]])
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("✅ تأیید و تسویه کامل", callback_data=f"admin_invoice_approve_{invoice_id}")],
+                            [InlineKeyboardButton("💳 ثبت پرداخت جزئی", callback_data=f"admin_invoice_partial_{invoice_id}")]
+                        ])
                     )
                     notified = True
                 except Exception as e:
