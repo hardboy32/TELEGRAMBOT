@@ -1391,6 +1391,10 @@ def register(app, config):
     )
     async def subscription_selected(client, query):
 
+        if not config.get("subscriptions_enabled", True):
+            await query.answer("⛔ بخش اشتراک‌های من فعلاً غیرفعال است.", show_alert=True)
+            return
+
         sub_id = int(
             query.data.split("_")[1]
         )
