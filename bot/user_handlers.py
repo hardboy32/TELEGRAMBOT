@@ -204,6 +204,28 @@ def register(app, config):
 
         state = user_states.get(user_id)
 
+        # Hiding a menu button is not access control: enforce feature toggles
+        # on manually typed button labels as well.
+        feature_by_text = {
+            "📦 اشتراک‌های من": "subscriptions_enabled",
+            "📊 وضعیت اشتراک": "status_enabled",
+            "👥 دعوت دوستان": "referral_enabled",
+            "🎟️ کد تخفیف": "coupon_enabled",
+            "📜 تاریخچه سفارش‌ها": "order_history_enabled",
+            "👤 حساب من": "account_enabled",
+            "☎️ پشتیبانی": "support_enabled",
+            "📚 آموزش": "tutorial_enabled",
+            "🎁 تست رایگان": "free_test_enabled",
+            "🎉 جشنواره": "festival_enabled",
+        }
+        feature_key = feature_by_text.get(text)
+        if feature_key and not config.get(feature_key, True):
+            await message.reply_text(
+                "⛔ این بخش فعلاً توسط مدیریت غیرفعال شده است.",
+                reply_markup=_menu(config, user_id)
+            )
+            return
+
         if text == "🛒 خرید سرویس":
 
             if not config.get("buy_enabled", True):
@@ -1341,6 +1363,10 @@ def register(app, config):
 
         sub = get_subscription(sub_id)
 
+        if not config.get("renew_enabled", True):
+            await query.answer("⛔ تمدید فعلاً غیرفعال است.", show_alert=True)
+            return
+
         if not sub or sub["user_id"] != query.from_user.id:
             await query.answer(
                 "❌ اشتراک پیدا نشد.",
@@ -1477,6 +1503,10 @@ def register(app, config):
         )
 
         item = get_tutorial(tutorial_id)
+
+        if not config.get("tutorial_enabled", True):
+            await query.answer("⛔ بخش آموزش فعلاً غیرفعال است.", show_alert=True)
+            return
 
         if not item or not item.get("active"):
             await query.answer(
