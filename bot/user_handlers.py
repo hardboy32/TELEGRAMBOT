@@ -16,7 +16,6 @@ from bot.database import (
     get_referral_count,
     get_referral_reward_count,
     get_coupon,
-    use_coupon,
     reset_low_volume_warning,
     get_tutorials,
     get_tutorial,
@@ -923,6 +922,10 @@ def register(app, config):
             query.data.split("_")[1]
         )
 
+        if not config.get("purchase_open", True):
+            await query.answer("⛔ فروش فعلاً بسته است.", show_alert=True)
+            return
+
         service = get_service(service_id)
 
         if not service or not service["active"]:
@@ -963,13 +966,22 @@ def register(app, config):
             )
             return
 
+        order_type = state.get("order_type", "buy")
+        gate_key = "renew_open" if order_type == "renew" else "purchase_open"
+        if not config.get(gate_key, True):
+            await query.answer(
+                "⛔ ثبت سفارش از این نوع فعلاً بسته است.",
+                show_alert=True
+            )
+            return
+
         service = get_service(
             state["service_id"]
         )
 
-        if not service:
+        if not service or not service.get("active"):
             await query.answer(
-                "❌ سرویس پیدا نشد.",
+                "❌ سرویس پیدا نشد یا غیرفعال شده است.",
                 show_alert=True
             )
             return
@@ -1001,13 +1013,9 @@ def register(app, config):
                     discount
                 )
 
-        if coupon and not use_coupon(coupon):
-            await query.answer("این کد تخفیف دیگر معتبر نیست یا ظرفیت استفاده از آن تمام شده است.", show_alert=True)
-            return
-
-        order_type = state.get("order_type", "buy")
-
-        order_id = create_order(
+        order_id = None
+        try:
+            order_id = create_order(
             user_id=user_id,
             service_id=service["id"],
             service_name=service["name"],
@@ -1017,7 +1025,10 @@ def register(app, config):
             discount_percent=discount,
             final_price=final_price,
             coupon=coupon
-        )
+            )
+        except ValueError as e:
+            await query.answer(str(e), show_alert=True)
+            return
 
         user_states[user_id] = {
             "step": "waiting_receipt",
@@ -1144,10 +1155,11 @@ def register(app, config):
             else message.photo.file_id
         )
 
-        set_receipt(
-            order_id,
-            receipt_file_id
-        )
+        if not set_receipt(order_id, receipt_file_id):
+            await message.reply_text(
+                "❌ سفارش در همین فاصله تغییر وضعیت داده است؛ رسید ثبت نشد."
+            )
+            return
 
         user_states.pop(
             user_id,
@@ -1390,13 +1402,17 @@ def register(app, config):
             )
             return
 
+        if not config.get("renew_open", True):
+            await query.answer("⛔ تمدید فعلاً بسته است.", show_alert=True)
+            return
+
         service = get_service(
             state["service_id"]
         )
 
-        if not service:
+        if not service or not service.get("active"):
             await query.answer(
-                "❌ سرویس پیدا نشد.",
+                "❌ سرویس پیدا نشد یا غیرفعال شده است.",
                 show_alert=True
             )
             return
