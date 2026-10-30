@@ -24,6 +24,7 @@ from bot.remote_storage import (
     stop_temporary_cleanup,
 )
 from bot.remote_storage_bootstrap import start_storage
+from bot.hermes import start_hermes_monitor, stop_hermes_monitor
 
 from bot.remote_state_monitor import (
     start_remote_state_monitor,
@@ -244,6 +245,8 @@ async def main():
             config
         )
 
+        start_hermes_monitor(app, config)
+
         if storage_started:
 
             start_file_watcher()
@@ -283,6 +286,11 @@ async def main():
         raise
 
     finally:
+
+        try:
+            await stop_hermes_monitor()
+        except Exception as e:
+            print(f"Hermes monitor stop error: {e}")
 
         if storage_started:
 
