@@ -21,7 +21,8 @@ from bot.database import (
     get_tutorials,
     get_tutorial,
     get_invoice,
-    set_invoice_receipt
+    set_invoice_receipt,
+    mark_invoice_paid
 )
 
 from bot.helpers import (
@@ -1038,14 +1039,37 @@ def register(app, config):
                 await message.reply_text("ثبت رسید انجام نشد؛ دوباره تلاش کنید.")
                 return
             user_states.pop(user_id, None)
+            if not invoice.get("approval_required", 1):
+                if mark_invoice_paid(invoice_id):
+                    try:
+                        await message.reply_text(
+                            f"✅ رسید فاکتور #{invoice_id} ثبت شد و پرداخت به‌صورت خودکار تأیید شد.",
+                            reply_markup=_menu(config, user_id)
+                        )
+                    except Exception:
+                        pass
+                else:
+                    await message.reply_text("ثبت پرداخت انجام نشد؛ لطفاً با پشتیبانی تماس بگیرید.")
+                return
+
+            notified = False
             for admin_id in config.get("admin_ids", []):
                 try:
-                    await client.send_photo(admin_id, message.photo.file_id,
+                    await client.send_photo(
+                        admin_id, message.photo.file_id,
                         caption=f"رسید فاکتور #{invoice_id} | مشتری {user_id} | مبلغ {format_price(invoice['total_amount'])} تومان",
-                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("تأیید پرداخت", callback_data=f"admin_invoice_approve_{invoice_id}")]]))
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("✅ تأیید پرداخت", callback_data=f"admin_invoice_approve_{invoice_id}")
+                        ]])
+                    )
+                    notified = True
                 except Exception as e:
                     print(f"Invoice receipt notify error: {e}")
-            await message.reply_text("رسید فاکتور دریافت و برای مدیریت ارسال شد.", reply_markup=_menu(config, user_id))
+            await message.reply_text(
+                "رسید فاکتور دریافت شد و برای مدیریت ارسال شد." if notified
+                else "رسید ثبت شد، اما ارسال اعلان به مدیریت ناموفق بود؛ لطفاً به پشتیبانی اطلاع دهید.",
+                reply_markup=_menu(config, user_id)
+            )
             return
 
         order_id = None
