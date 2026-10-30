@@ -1168,11 +1168,20 @@ def register(app, config):
                 return
 
             notified = False
+            invoice_remaining = max(
+                0,
+                int(invoice["total_amount"]) - int(invoice.get("paid_amount") or 0)
+            )
             for admin_id in config.get("admin_ids", []):
                 try:
                     await client.send_photo(
                         admin_id, message.photo.file_id,
-                        caption=f"رسید فاکتور #{invoice_id} | مشتری {user_id} | مبلغ {format_price(invoice['total_amount'])} تومان",
+                        caption=(
+                            f"رسید فاکتور #{invoice_id} | مشتری {user_id}\n"
+                            f"مبلغ کل: {format_price(invoice['total_amount'])} تومان | "
+                            f"پرداخت قبلی: {format_price(invoice.get('paid_amount') or 0)} تومان\n"
+                            f"مانده قابل پرداخت: {format_price(invoice_remaining)} تومان"
+                        ),
                         reply_markup=InlineKeyboardMarkup([
                             [InlineKeyboardButton("✅ تأیید و تسویه کامل", callback_data=f"admin_invoice_approve_{invoice_id}")],
                             [InlineKeyboardButton("💳 ثبت پرداخت جزئی", callback_data=f"admin_invoice_partial_{invoice_id}")]
