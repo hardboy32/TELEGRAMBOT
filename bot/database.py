@@ -456,7 +456,8 @@ def record_invoice_partial_payment(invoice_id, amount, created_by=None):
     cur = conn.cursor()
     cur.execute("BEGIN IMMEDIATE")
     row = cur.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
-    if not row or row["status"] != "pending":
+    if (not row or row["status"] != "pending"
+            or not str(row["receipt_file_id"] or "").strip()):
         conn.rollback()
         conn.close()
         return None
@@ -471,7 +472,8 @@ def record_invoice_partial_payment(invoice_id, amount, created_by=None):
     completed = new_paid >= int(invoice["total_amount"])
     if completed:
         cur.execute("""
-            UPDATE invoices SET status = 'paid', paid_at = ?, paid_amount = ?
+            UPDATE invoices
+            SET status = 'paid', paid_at = ?, paid_amount = ?, receipt_file_id = NULL
             WHERE id = ? AND status = 'pending'
         """, (now(), new_paid, invoice_id))
         old_balance = int(invoice.get("balance_before") or 0)
@@ -493,8 +495,11 @@ def record_invoice_partial_payment(invoice_id, amount, created_by=None):
             """, (invoice["user_id"], settlement,
                   "تسویه مانده حساب در فاکتور #" + str(invoice_id), now(), created_by))
     else:
-        cur.execute("UPDATE invoices SET paid_amount = ? WHERE id = ? AND status = 'pending'",
-                    (new_paid, invoice_id))
+        cur.execute("""
+            UPDATE invoices
+            SET paid_amount = ?, receipt_file_id = NULL
+            WHERE id = ? AND status = 'pending'
+        """, (new_paid, invoice_id))
     conn.commit()
     conn.close()
     return {
