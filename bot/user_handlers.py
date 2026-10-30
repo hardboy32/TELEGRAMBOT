@@ -968,6 +968,10 @@ def register(app, config):
                     discount
                 )
 
+        if coupon and not use_coupon(coupon):
+            await query.answer("این کد تخفیف دیگر معتبر نیست یا ظرفیت استفاده از آن تمام شده است.", show_alert=True)
+            return
+
         order_type = state.get("order_type", "buy")
 
         order_id = create_order(
