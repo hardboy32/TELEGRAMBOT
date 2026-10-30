@@ -455,6 +455,8 @@ def get_pending_orders():
         SELECT *
         FROM orders
         WHERE status = 'pending'
+          AND receipt_file_id IS NOT NULL
+          AND TRIM(receipt_file_id) != ''
         ORDER BY id ASC
     """).fetchall()
 
