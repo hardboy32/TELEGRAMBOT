@@ -431,6 +431,53 @@ def delete_service(service_id):
     return True
 
 
+def record_invoice_partial_payment(invoice_id, amount, created_by=None):
+    amount = int(amount)
+    if amount <= 0:
+        raise ValueError("مبلغ پرداخت باید بیشتر از صفر باشد.")
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
+    row = cur.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+    if not row or row["status"] != "pending":
+        conn.rollback()
+        conn.close()
+        return None
+    invoice = dict(row)
+    old_paid = int(invoice.get("paid_amount") or 0)
+    remaining = max(0, int(invoice["total_amount"]) - old_paid)
+    if amount > remaining:
+        conn.rollback()
+        conn.close()
+        raise ValueError("مبلغ واردشده از مانده فاکتور بیشتر است.")
+    new_paid = old_paid + amount
+    completed = new_paid >= int(invoice["total_amount"])
+    if completed:
+        cur.execute("""
+            UPDATE invoices SET status = 'paid', paid_at = ?, paid_amount = ?
+            WHERE id = ? AND status = 'pending'
+        """, (now(), new_paid, invoice_id))
+        old_balance = int(invoice.get("balance_before") or 0)
+        settlement = -old_balance if old_balance > 0 else min(-old_balance, int(invoice["base_amount"]))
+        if settlement:
+            cur.execute("""
+                INSERT INTO customer_ledger (user_id, amount, description, created_at, created_by)
+                VALUES (?, ?, ?, ?, ?)
+            """, (invoice["user_id"], settlement,
+                  "تسویه مانده حساب در فاکتور #" + str(invoice_id), now(), created_by))
+    else:
+        cur.execute("UPDATE invoices SET paid_amount = ? WHERE id = ? AND status = 'pending'",
+                    (new_paid, invoice_id))
+    conn.commit()
+    conn.close()
+    return {
+        "paid_amount": new_paid,
+        "remaining": max(0, int(invoice["total_amount"]) - new_paid),
+        "completed": completed,
+        "user_id": invoice["user_id"]
+    }
+
+
 def create_order(
     user_id,
     service_id,
