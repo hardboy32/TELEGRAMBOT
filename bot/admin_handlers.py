@@ -2948,8 +2948,19 @@ def register(app, config):
             await query.answer("❌ سفارش پیدا نشد.", show_alert=True)
             return
 
-        update_order_status(order_id, status)
+        updated = update_order_status(order_id, status)
+        if not updated:
+            await query.answer(
+                "تغییر وضعیت انجام نشد؛ ممکن است ظرفیت کد تخفیف تمام شده باشد یا سفارش دیگر قابل تغییر نباشد.",
+                show_alert=True
+            )
+            return
+
         order = get_order(order_id)
+        if not order:
+            await query.answer("سفارش پیدا نشد.", show_alert=True)
+            return
+
         uid = order["user_id"]
 
         await query.answer(f"وضعیت → {status}")
