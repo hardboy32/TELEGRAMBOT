@@ -1,4 +1,5 @@
 import os
+import json
 import zipfile
 import sqlite3
 import shutil
@@ -305,98 +306,84 @@ def inspect_backup(zip_path):
 def restore_backup(zip_path, config):
 
     info = inspect_backup(zip_path)
-
     if not info.get("ok"):
         return info
 
     _ensure_dirs()
-
-    tmp = tempfile.mkdtemp(
-        dir=BACKUP_DIR
+    tmp = tempfile.mkdtemp(dir=BACKUP_DIR)
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    db_recovery = os.path.join(
+        "data",
+        f"cafe_hermes.db.before_restore_{stamp}"
     )
+    config_recovery = f"config.json.before_restore_{stamp}"
+    old_config = dict(config)
+    db_replaced = False
+    config_replaced = False
 
     try:
-
-        with zipfile.ZipFile(
-            zip_path,
-            "r"
-        ) as zf:
-
+        with zipfile.ZipFile(zip_path, "r") as zf:
             names = zf.namelist()
-
-            db_file = _extract_member(
-                zf,
-                names,
-                tmp,
-                "cafe_hermes.db"
-            )
-
-            config_file = _extract_member(
-                zf,
-                names,
-                tmp,
-                "config.json"
-            )
+            db_file = _extract_member(zf, names, tmp, "cafe_hermes.db")
+            config_file = _extract_member(zf, names, tmp, "config.json")
 
         if not db_file:
-
             return {
                 "ok": False,
                 "message": "دیتابیس بکاپ پیدا نشد."
             }
 
-        stamp = datetime.now().strftime(
-            "%Y-%m-%d_%H-%M-%S"
-        )
+        # Validate optional config before touching the live files.
+        if config_file and os.path.exists(config_file):
+            with open(config_file, "r", encoding="utf-8") as f:
+                restored_config = json.load(f)
+            if not isinstance(restored_config, dict):
+                raise RuntimeError("فایل تنظیمات داخل بکاپ معتبر نیست.")
 
         if os.path.exists(DB_PATH):
+            shutil.copy2(DB_PATH, db_recovery)
+        if config_file and os.path.exists(config_file) and os.path.exists(CONFIG_PATH):
+            shutil.copy2(CONFIG_PATH, config_recovery)
 
-            shutil.copy2(
-                DB_PATH,
-                os.path.join(
-                    "data",
-                    f"cafe_hermes.db.before_restore_{stamp}"
-                )
-            )
+        # Both extracted files are on the same filesystem as their targets;
+        # replace atomically rather than copying over a live database.
+        os.replace(db_file, DB_PATH)
+        db_replaced = True
 
-        shutil.copy2(
-            db_file,
-            DB_PATH
-        )
-
-        if (
-            config_file
-            and os.path.exists(config_file)
-        ):
-
-            if os.path.exists(CONFIG_PATH):
-
-                shutil.copy2(
-                    CONFIG_PATH,
-                    f"config.json.before_restore_{stamp}"
-                )
-
-            shutil.copy2(
-                config_file,
-                CONFIG_PATH
-            )
-
-            apply_restored_config(
-                config,
-                CONFIG_PATH
-            )
+        if config_file and os.path.exists(config_file):
+            os.replace(config_file, CONFIG_PATH)
+            config_replaced = True
+            apply_restored_config(config, CONFIG_PATH)
 
         init_db()
 
+        # Payment details are stored in SQLite, not config.json.
+        from bot.database import get_setting
+        for key in ("payment_card", "payment_name"):
+            value = get_setting(key)
+            if value:
+                config[key] = value
+
         info["ok"] = True
-
-        info["message"] = (
-            "بکاپ با موفقیت بازگردانی شد."
-        )
-
+        info["message"] = "بکاپ با موفقیت بازگردانی شد."
         return info
 
     except Exception as e:
+        # Roll back to the pre-restore copies if any later step failed.
+        if db_replaced:
+            if os.path.exists(db_recovery):
+                os.replace(db_recovery, DB_PATH)
+            elif os.path.exists(DB_PATH):
+                os.remove(DB_PATH)
+
+        if config_replaced:
+            if os.path.exists(config_recovery):
+                os.replace(config_recovery, CONFIG_PATH)
+            elif os.path.exists(CONFIG_PATH):
+                os.remove(CONFIG_PATH)
+
+        config.clear()
+        config.update(old_config)
 
         return {
             "ok": False,
@@ -404,12 +391,7 @@ def restore_backup(zip_path, config):
         }
 
     finally:
-
-        shutil.rmtree(
-            tmp,
-            ignore_errors=True
-        )
-
+        shutil.rmtree(tmp, ignore_errors=True)
 
 async def auto_backup_loop(app, config):
     """
