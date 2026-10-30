@@ -187,6 +187,8 @@ def init_db():
         cur.execute("ALTER TABLE invoices ADD COLUMN approval_required INTEGER NOT NULL DEFAULT 1")
     if "paid_amount" not in invoice_columns:
         cur.execute("ALTER TABLE invoices ADD COLUMN paid_amount INTEGER NOT NULL DEFAULT 0")
+    if "invoice_type" not in invoice_columns:
+        cur.execute("ALTER TABLE invoices ADD COLUMN invoice_type TEXT NOT NULL DEFAULT 'payment'")
 
     # seed default platforms if empty
     existing = cur.execute(
@@ -1387,13 +1389,17 @@ def create_invoice(user_id, title, base_amount, description="", service_id=None,
     ).fetchone()
     balance = int(row["balance"] or 0)
     total = max(0, base_amount + balance)
+    invoice_type = "payment" if approval_required else "notice"
+    invoice_status = "pending" if approval_required else "notice"
     cur.execute("""
         INSERT INTO invoices
         (user_id, service_id, title, description, base_amount, balance_before,
-         total_amount, status, created_at, created_by, approval_required, paid_amount)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, 0)
+         total_amount, status, created_at, created_by, approval_required, paid_amount,
+         invoice_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
     """, (user_id, service_id, title, description, base_amount, balance,
-          total, now(), created_by, 1 if approval_required else 0))
+          total, invoice_status, now(), created_by,
+          1 if approval_required else 0, invoice_type))
     invoice_id = cur.lastrowid
     conn.commit()
     conn.close()
