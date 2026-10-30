@@ -2646,14 +2646,14 @@ def register(app, config):
             ]])
         else:
             body = (
-                "📄 اطلاعیه حساب مشتری\n"
+                "🧾 صورتحساب اطلاع‌رسانی\n"
                 "━━━━━━━━━━━━━━━━━━\n"
                 f"شماره اطلاعیه: #{invoice_id}\n"
                 f"شرح: {invoice['title']}\n"
                 + (f"توضیحات: {description}\n" if description else "")
                 + "━━━━━━━━━━━━━━━━━━\n"
-                + f"مبلغ ثبت‌شده در این اطلاعیه: {format_price(invoice['base_amount'])} تومان\n"
-                + f"وضعیت حساب قبلی: {balance_text}\n"
+                + (f"مبلغ پایه: {format_price(invoice['base_amount'])} تومان\n" if invoice["base_amount"] else "")
+                + f"وضعیت مانده حساب: {balance_text}\n"
                 + f"جمع مورد اطلاع: {format_price(invoice['total_amount'])} تومان\n"
                 + "━━━━━━━━━━━━━━━━━━\n"
                 + "این پیام صرفاً جهت اطلاع از وضعیت حساب شما ارسال شده است.\n"
