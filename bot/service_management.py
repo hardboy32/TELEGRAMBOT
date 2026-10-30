@@ -425,7 +425,7 @@ def register(app, config):
             "service_id": service_id
         }
         await query.message.edit_text(
-            "✏️ نام جدید سرویس را ارسال کنید:\\n"
+            "✏️ نام جدید سرویس را ارسال کنید:\n"
             f"نام فعلی: {service['name']}"
         )
         raise StopPropagation
