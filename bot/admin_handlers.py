@@ -455,8 +455,14 @@ def user_detail_keyboard(user_id):
             ],
             [
                 InlineKeyboardButton(
-                    "🧾 ساخت فاکتور",
+                    "🧾 ساخت فاکتور پرداختی",
                     callback_data=f"admin_invoice_{user_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📄 ارسال اطلاعیه مانده حساب",
+                    callback_data=f"admin_invoice_notice_{user_id}"
                 )
             ],
             [
@@ -2516,6 +2522,36 @@ def register(app, config):
         await query.message.reply_text("سرویس را انتخاب کنید یا فاکتور با مبلغ دلخواه بسازید:", reply_markup=InlineKeyboardMarkup(rows))
         await query.answer()
 
+    @app.on_callback_query(filters.regex(r"^admin_invoice_notice_\d+$"))
+    async def admin_invoice_notice(client, query):
+        if not admin(query.from_user.id, config):
+            await query.answer("دسترسی ندارید.", show_alert=True)
+            return
+        target_id = int(query.data.split("_")[-1])
+        current_balance = get_customer_balance(target_id)
+        if current_balance > 0:
+            balance_text = f"{format_price(current_balance)} تومان بدهکار"
+        elif current_balance < 0:
+            balance_text = f"{format_price(abs(current_balance))} تومان بستانکار"
+        else:
+            balance_text = "حساب تسویه است"
+        admin_states[query.from_user.id] = {
+            "step": "invoice_delivery",
+            "target_id": target_id,
+            "title": "اطلاعیه مانده حساب",
+            "amount": 0,
+            "description": f"مانده فعلی حساب شما: {balance_text}",
+            "approval_required": False
+        }
+        await query.message.reply_text(
+            f"مانده فعلی مشتری: {balance_text}\nروش ارسال اطلاعیه را انتخاب کنید:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📨 ارسال مستقیم برای مشتری", callback_data="admin_invoice_delivery_direct")],
+                [InlineKeyboardButton("📋 ساخت پیام برای فوروارد دستی", callback_data="admin_invoice_delivery_manual")]
+            ])
+        )
+        await query.answer()
+
     @app.on_callback_query(filters.regex(r"^admin_invoice_svc_\d+_\d+$"))
     async def admin_invoice_service(client, query):
         if not admin(query.from_user.id, config):
@@ -2620,9 +2656,9 @@ def register(app, config):
                 f"شرح: {invoice['title']}\n"
                 + (f"توضیحات: {description}\n" if description else "")
                 + "━━━━━━━━━━━━━━━━━━\n"
-                + f"مبلغ ثبت‌شده: {format_price(invoice['base_amount'])} تومان\n"
+                + f"مبلغ ثبت‌شده در این اطلاعیه: {format_price(invoice['base_amount'])} تومان\n"
                 + f"وضعیت حساب قبلی: {balance_text}\n"
-                + f"مانده حساب فعلی: {format_price(abs(invoice['total_amount']))} تومان\n"
+                + f"جمع مورد اطلاع: {format_price(invoice['total_amount'])} تومان\n"
                 + "━━━━━━━━━━━━━━━━━━\n"
                 + "این پیام صرفاً جهت اطلاع از وضعیت حساب شما ارسال شده است.\n"
                 + "نیازی به پرداخت از طریق این پیام، ارسال رسید یا تأیید آن نیست."
