@@ -206,6 +206,10 @@ def register(app, config):
 
         if text == "🛒 خرید سرویس":
 
+            if not config.get("buy_enabled", True):
+                await message.reply_text("⛔ گزینه خرید سرویس فعلاً غیرفعال است.", reply_markup=_menu(config, user_id))
+                return
+
             services = get_services(True)
 
             if not services:
@@ -246,6 +250,10 @@ def register(app, config):
             return
 
         if text == "🔄 تمدید":
+
+            if not config.get("renew_enabled", True):
+                await message.reply_text("⛔ گزینه تمدید فعلاً غیرفعال است.", reply_markup=_menu(config, user_id))
+                return
 
             user_states[user_id] = {
                 "step": "renew_username",
@@ -922,6 +930,9 @@ def register(app, config):
             query.data.split("_")[1]
         )
 
+        if not config.get("buy_enabled", True):
+            await query.answer("⛔ گزینه خرید سرویس فعلاً غیرفعال است.", show_alert=True)
+            return
         if not config.get("purchase_open", True):
             await query.answer("⛔ فروش فعلاً بسته است.", show_alert=True)
             return
@@ -967,6 +978,11 @@ def register(app, config):
             return
 
         order_type = state.get("order_type", "buy")
+        visibility_key = "renew_enabled" if order_type == "renew" else "buy_enabled"
+        if not config.get(visibility_key, True):
+            await query.answer("⛔ ثبت این نوع سفارش فعلاً غیرفعال است.", show_alert=True)
+            return
+
         gate_key = "renew_open" if order_type == "renew" else "purchase_open"
         if not config.get(gate_key, True):
             await query.answer(
@@ -1402,6 +1418,9 @@ def register(app, config):
             )
             return
 
+        if not config.get("renew_enabled", True):
+            await query.answer("⛔ گزینه تمدید فعلاً غیرفعال است.", show_alert=True)
+            return
         if not config.get("renew_open", True):
             await query.answer("⛔ تمدید فعلاً بسته است.", show_alert=True)
             return
