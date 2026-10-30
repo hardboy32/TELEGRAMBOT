@@ -314,7 +314,9 @@ def _sanitized_config():
         for key in (
             "api_id",
             "api_hash",
-            "bot_token"
+            "bot_token",
+            "payment_card",
+            "payment_name"
         ):
             data.pop(key, None)
 
