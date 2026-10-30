@@ -208,6 +208,10 @@ def register(app, config):
 
         user_id = message.from_user.id
 
+        if not config.get("subscriptions_enabled", True):
+            await message.reply_text("⛔ بخش اشتراک‌های من فعلاً غیرفعال است.")
+            raise StopPropagation
+
         subscriptions = get_user_subscriptions(
             user_id
         )
