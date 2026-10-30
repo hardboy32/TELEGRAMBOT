@@ -62,7 +62,8 @@ from bot.database import (
     get_customer_ledger,
     create_invoice,
     get_invoice,
-    get_user_invoices
+    get_user_invoices,
+    mark_invoice_paid
 )
 
 
@@ -2518,6 +2519,24 @@ def register(app, config):
         await query.message.reply_text("عنوان فاکتور را وارد کنید:")
         await query.answer()
 
+    @app.on_callback_query(filters.regex(r"^admin_invoice_approve_\\d+$"))
+    async def admin_invoice_approve(client, query):
+        if not admin(query.from_user.id, config):
+            return
+        invoice_id = int(query.data.split("_")[-1])
+        invoice = get_invoice(invoice_id)
+        if not invoice or invoice.get("status") != "pending" or not invoice.get("receipt_file_id"):
+            await query.answer("فاکتور یا رسید معتبر نیست.", show_alert=True)
+            return
+        if not mark_invoice_paid(invoice_id, created_by=query.from_user.id):
+            await query.answer("این فاکتور قبلاً بررسی شده.", show_alert=True)
+            return
+        try:
+            await client.send_message(invoice["user_id"], f"✅ پرداخت فاکتور #{invoice_id} تأیید شد.")
+        except Exception as e:
+            print(f"Invoice approval notification error: {e}")
+        await query.message.reply_text(f"✅ پرداخت فاکتور #{invoice_id} تأیید شد.")
+        await query.answer("پرداخت تأیید شد.")
     @app.on_callback_query(
         filters.regex(r"^admin_user_\d+$")
     )
