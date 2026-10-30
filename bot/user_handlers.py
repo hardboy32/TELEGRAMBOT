@@ -1,4 +1,4 @@
-from pyrogram import filters, enums
+from pyrogram import filters, enums, StopPropagation
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.database import (

@@ -60,7 +60,7 @@ _TEMP_DIRS = (
 
 # Each committed database change schedules a fresh Telegram snapshot.
 # A short debounce merges only writes that happen in the same burst.
-MIN_SYNC_INTERVAL = 0
+MIN_SYNC_INTERVAL = 60
 _last_sync_at = 0.0
 
 _dirty = False
@@ -1415,15 +1415,25 @@ async def restore_from_remote():
         elif local_db_valid:
             print("Remote Storage: local database is healthy; keeping it without downloading a copy.")
 
-        # Keep the existing remote configuration behavior. The config archive
-        # is small and contains only non-secret settings; payment credentials
-        # remain in the SQLite database.
+        # Compare configuration independently from the database. A valid
+        # local config must never be overwritten by an older Telegram snapshot.
         if config_message:
-            try:
-                await _restore_config_from_message(config_message)
-                print("Remote Storage: configuration restored.")
-            except Exception as e:
-                print(f"Remote config restore error: {e}")
+            remote_config_time = _backup_message_timestamp(config_message)
+            local_config_time = _mtime(CONFIG_PATH)
+            should_restore_config = not os.path.isfile(CONFIG_PATH)
+            if (not should_restore_config
+                    and remote_config_time is not None
+                    and local_config_time is not None):
+                should_restore_config = remote_config_time > local_config_time + 30
+
+            if should_restore_config:
+                try:
+                    await _restore_config_from_message(config_message)
+                    print("Remote Storage: newer/missing configuration restored.")
+                except Exception as e:
+                    print(f"Remote config restore error: {e}")
+            else:
+                print("Remote Storage: keeping local configuration; remote copy is not provably newer.")
 
         if not database_is_usable():
             print("Remote Storage: refusing startup because no healthy database is available.")
