@@ -1,3 +1,4 @@
+import html
 from pyrogram import filters, enums, StopPropagation
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 

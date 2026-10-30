@@ -95,6 +95,12 @@ def _service_detail_keyboard(service_id):
         [
             [
                 InlineKeyboardButton(
+                    "✏️ ویرایش نام",
+                    callback_data=f"svc_edit_name_{service_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     "💾 ویرایش حجم",
                     callback_data=f"svc_edit_vol_{service_id}"
                 )
@@ -212,6 +218,27 @@ def register(app, config):
 
         text = _digits(raw_text)
         action = state.get("action")
+
+        if action == "edit_name":
+            name = raw_text.strip()
+            if len(name) < 2 or len(name) > 64:
+                await message.reply_text("❌ نام سرویس باید بین ۲ تا ۶۴ کاراکتر باشد.")
+                raise StopPropagation
+
+            service_id = state["service_id"]
+            if not get_service(service_id):
+                service_states.pop(user_id, None)
+                await message.reply_text("❌ سرویس پیدا نشد.")
+                raise StopPropagation
+
+            update_service(service_id, name=name)
+            service_states.pop(user_id, None)
+            updated = get_service(service_id)
+            await message.reply_text(
+                "✅ نام سرویس تغییر کرد.\n\n" + _service_detail_text(updated),
+                reply_markup=_service_detail_keyboard(service_id)
+            )
+            raise StopPropagation
 
         if action in ("add_volume", "edit_volume"):
             try:
@@ -373,6 +400,33 @@ def register(app, config):
         await query.message.edit_text(
             _service_detail_text(service),
             reply_markup=_service_detail_keyboard(service_id)
+        )
+        raise StopPropagation
+
+    @app.on_callback_query(
+        filters.regex(r"^svc_edit_name_\d+$"),
+        group=-19
+    )
+    async def service_edit_name_callback(client, query):
+        if not admin(query.from_user.id, config):
+            await query.answer("دسترسی ندارید.", show_alert=True)
+            return
+
+        await query.answer()
+        service_id = int(query.data.rsplit("_", 1)[1])
+        service = get_service(service_id)
+
+        if not service:
+            await query.message.edit_text("❌ سرویس پیدا نشد.")
+            raise StopPropagation
+
+        service_states[query.from_user.id] = {
+            "action": "edit_name",
+            "service_id": service_id
+        }
+        await query.message.edit_text(
+            "✏️ نام جدید سرویس را ارسال کنید:\n"
+            f"نام فعلی: {service['name']}"
         )
         raise StopPropagation
 

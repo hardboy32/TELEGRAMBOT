@@ -1976,7 +1976,12 @@ def register(app, config):
 
             return
 
-        reject_order(order_id)
+        if not reject_order(order_id):
+            await query.answer(
+                "این سفارش در همین فاصله تغییر وضعیت داده است؛ دوباره فهرست سفارش‌ها را بررسی کنید.",
+                show_alert=True
+            )
+            return
 
         try:
 
