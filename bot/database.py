@@ -1378,7 +1378,7 @@ def mark_invoice_paid(invoice_id, created_by=None):
             INSERT INTO customer_ledger (user_id, amount, description, created_at, created_by)
             VALUES (?, ?, ?, ?, ?)
         """, (invoice["user_id"], -int(invoice["balance_before"]),
-              "تسویه مانده حساب در فاکتور #" + str(invoice_id), created_by, now()))
+              "تسویه مانده حساب در فاکتور #" + str(invoice_id), now(), created_by))
     conn.commit()
     conn.close()
     return True
