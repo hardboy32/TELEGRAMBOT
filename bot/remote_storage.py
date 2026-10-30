@@ -507,15 +507,9 @@ async def _get_state_message(
     if marker is None:
         marker = DB_STATE_MARKER
 
-    try:
-        chat = await _get_chat_info(
-            chat_id
-        )
-    except Exception as e:
-        print(
-            f"Remote Storage: state getChat failed: {e}"
-        )
-        return None
+    # A failed getChat is not equivalent to "no backup exists". Propagate
+    # API/network errors so sync_all never creates a duplicate post by mistake.
+    chat = await _get_chat_info(chat_id)
 
     pinned = (
         chat.get("pinned_message")
@@ -658,9 +652,18 @@ async def _create_or_replace_channel_state(
     archive_path,
     state_message_id=None
 ):
-    # Keep one current backup message per channel. Telegram supports replacing
-    # the document media in-place, so the message id and its pin remain stable.
+    global _db_state_message_id
+    global _config_state_message_id
+
+    # Prefer the pinned restore point. If it was temporarily unpinned while
+    # this process is alive, reuse the cached message id rather than posting
+    # another archive.
     existing = await _get_state_message(chat_id, marker)
+    message_id = None
+    if existing:
+        message_id = existing.get("message_id") or existing.get("id")
+    elif state_message_id:
+        message_id = state_message_id
 
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     caption = (
@@ -669,14 +672,9 @@ async def _create_or_replace_channel_state(
         f"Backup time: {stamp}"
     )
 
-    if existing:
-        message_id = existing.get("message_id") or existing.get("id")
-        if not message_id:
-            raise RuntimeError("Existing Telegram backup message has no message_id.")
-
-        # Never fall back to sending a new post if editing fails: doing so
-        # would recreate the unbounded archive accumulation this avoids.
-        # The old document remains available and sync_all will retry later.
+    if message_id:
+        # Never fall back to sending a new post if editing fails: the previous
+        # backup remains intact and sync_all retries this same message later.
         edited = await _edit_document(
             chat_id,
             message_id,
@@ -686,14 +684,21 @@ async def _create_or_replace_channel_state(
         if not edited:
             raise RuntimeError("Telegram did not confirm the backup message edit.")
 
+        # Cache the known id before pinning so a transient pin failure cannot
+        # cause a new message to be sent on the next retry.
+        if marker == DB_STATE_MARKER:
+            _db_state_message_id = message_id
+        elif marker == CONFIG_STATE_MARKER:
+            _config_state_message_id = message_id
+
+        await _pin_message(chat_id, message_id)
         print(
             f"Remote Storage: updated existing {label} backup "
             f"in message {message_id}."
         )
         return message_id
 
-    # First run (or missing pinned restore point): create and pin the initial
-    # state message. Subsequent syncs will edit this same message in-place.
+    # First run (or no known restore point): create the initial message.
     sent = await _send_document(chat_id, archive_path, caption)
     if not sent:
         raise RuntimeError("Telegram did not return the uploaded backup message.")
@@ -702,9 +707,15 @@ async def _create_or_replace_channel_state(
     if not message_id:
         raise RuntimeError("Telegram backup message has no message_id.")
 
+    # Cache before pinning. If pinning transiently fails, the retry edits this
+    # same message instead of uploading another copy.
+    if marker == DB_STATE_MARKER:
+        _db_state_message_id = message_id
+    elif marker == CONFIG_STATE_MARKER:
+        _config_state_message_id = message_id
+
     await _pin_message(chat_id, message_id)
     return message_id
-
 
 async def sync_all(force=False):
     global _dirty
