@@ -140,6 +140,36 @@ def init_db():
         )
     """)
 
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS customer_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL,
+            description TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by INTEGER
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS invoices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            service_id INTEGER,
+            title TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            base_amount INTEGER NOT NULL,
+            balance_before INTEGER NOT NULL DEFAULT 0,
+            total_amount INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            receipt_file_id TEXT,
+            created_at TEXT NOT NULL,
+            paid_at TEXT,
+            created_by INTEGER
+        )
+    """)
+
     # seed default platforms if empty
     existing = cur.execute(
         "SELECT COUNT(*) AS c FROM tutorials"
@@ -1228,3 +1258,128 @@ def reset_user_info(user_id):
     conn.commit()
     conn.close()
     return True
+
+
+# Customer ledger: positive balance means customer owes money; negative means
+# the customer has credit. Every movement is immutable and timestamped.
+def get_customer_balance(user_id):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS balance FROM customer_ledger WHERE user_id = ?",
+        (user_id,)
+    ).fetchone()
+    conn.close()
+    return int(row["balance"] or 0)
+
+
+def add_customer_ledger_entry(user_id, amount, description, created_by=None):
+    amount = int(amount)
+    if amount == 0:
+        raise ValueError("مبلغ گردش حساب نمی‌تواند صفر باشد.")
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO customer_ledger (user_id, amount, description, created_at, created_by)
+        VALUES (?, ?, ?, ?, ?)
+    """, (user_id, amount, str(description).strip(), now(), created_by))
+    entry_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return entry_id
+
+
+def get_customer_ledger(user_id, limit=30):
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT * FROM customer_ledger WHERE user_id = ?
+        ORDER BY id DESC LIMIT ?
+    """, (user_id, int(limit))).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def create_invoice(user_id, title, base_amount, description="", service_id=None, created_by=None):
+    base_amount = int(base_amount)
+    if base_amount < 0:
+        raise ValueError("مبلغ فاکتور نمی‌تواند منفی باشد.")
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
+    row = cur.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS balance FROM customer_ledger WHERE user_id = ?",
+        (user_id,)
+    ).fetchone()
+    balance = int(row["balance"] or 0)
+    total = max(0, base_amount + balance)
+    cur.execute("""
+        INSERT INTO invoices
+        (user_id, service_id, title, description, base_amount, balance_before,
+         total_amount, status, created_at, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    """, (user_id, service_id, title, description, base_amount, balance, total, now(), created_by))
+    invoice_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return invoice_id
+
+
+def get_invoice(invoice_id):
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user_invoices(user_id, limit=20):
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT * FROM invoices WHERE user_id = ?
+        ORDER BY id DESC LIMIT ?
+    """, (user_id, int(limit))).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def set_invoice_receipt(invoice_id, file_id):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE invoices SET receipt_file_id = ?
+        WHERE id = ? AND status = 'pending'
+    """, (file_id, invoice_id))
+    changed = cur.rowcount
+    conn.commit()
+    conn.close()
+    return bool(changed)
+
+
+def mark_invoice_paid(invoice_id, created_by=None):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
+    row = cur.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+    if not row or row["status"] != "pending":
+        conn.rollback()
+        conn.close()
+        return False
+    invoice = dict(row)
+    cur.execute("""
+        UPDATE invoices SET status = 'paid', paid_at = ?
+        WHERE id = ? AND status = 'pending'
+    """, (now(), invoice_id))
+    if cur.rowcount != 1:
+        conn.rollback()
+        conn.close()
+        return False
+    # Settle the pre-existing debt/credit exactly once. Any new debt from an
+    # unpaid invoice is recorded separately when an admin marks it unpaid/owed.
+    if invoice["balance_before"]:
+        cur.execute("""
+            INSERT INTO customer_ledger (user_id, amount, description, created_at, created_by)
+            VALUES (?, ?, ?, ?, ?)
+        """, (invoice["user_id"], -int(invoice["balance_before"]),
+              "تسویه مانده حساب در فاکتور #" + str(invoice_id), created_by, now()))
+    conn.commit()
+    conn.close()
+    return True
+
