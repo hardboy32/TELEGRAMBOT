@@ -1,13 +1,7 @@
-import json
-
 from pyrogram import filters, StopPropagation
 from pyrogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton
-)
-
-from bot.database import (
-    get_user_subscriptions
 )
 
 from bot.helpers import (
@@ -190,117 +184,6 @@ def register(app, config):
             )
 
             raise StopPropagation
-
-    # =========================================================
-    # اشتراک‌های من
-    # =========================================================
-
-    @app.on_message(
-        filters.private
-        & filters.text
-        & filters.regex("^📦 اشتراک‌های من$"),
-        group=-20
-    )
-    async def my_subscriptions(
-        client,
-        message
-    ):
-
-        user_id = message.from_user.id
-
-        if not config.get("subscriptions_enabled", True):
-            await message.reply_text("⛔ بخش اشتراک‌های من فعلاً غیرفعال است.")
-            raise StopPropagation
-
-        subscriptions = get_user_subscriptions(
-            user_id
-        )
-
-        if not subscriptions:
-
-            await message.reply_text(
-                "📦 شما هنوز اشتراکی ندارید."
-            )
-
-            raise StopPropagation
-
-        rows = []
-
-        text_lines = [
-            "📦 اشتراک‌های شما:\n"
-        ]
-
-        for index, sub in enumerate(
-            subscriptions,
-            start=1
-        ):
-
-            service_name = (
-                sub.get("service_name")
-                or "سرویس"
-            )
-
-            username = (
-                sub.get("username")
-                or "بدون نام کاربری"
-            )
-
-            status = (
-                sub.get("status")
-                or "unknown"
-            )
-
-            if status == "active":
-                status_text = "🟢 فعال"
-
-            elif status in (
-                "expired",
-                "inactive",
-                "disabled"
-            ):
-                status_text = "🔴 غیرفعال"
-
-            elif status == "pending":
-                status_text = "🟡 در انتظار"
-
-            else:
-                status_text = f"🔵 {status}"
-
-            text_lines.append(
-                f"{index}. 📦 {service_name}\n"
-                f"   👤 @{username}\n"
-                f"   وضعیت: {status_text}\n"
-            )
-
-            subscription_url = (
-                sub.get("subscription_url")
-            )
-
-            if subscription_url:
-
-                rows.append(
-                    [
-                        InlineKeyboardButton(
-                            (
-                                f"{index}️⃣ "
-                                f"📦 {service_name} | "
-                                f"@{username}"
-                            ),
-                            url=subscription_url
-                        )
-                    ]
-                )
-
-        await message.reply_text(
-            "\n".join(text_lines),
-            reply_markup=(
-                InlineKeyboardMarkup(rows)
-                if rows
-                else None
-            )
-        )
-
-        raise StopPropagation
 
     # =========================================================
     # نمایش پنل کنترل
