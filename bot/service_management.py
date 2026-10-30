@@ -404,7 +404,7 @@ def register(app, config):
         raise StopPropagation
 
     @app.on_callback_query(
-        filters.regex(r"^svc_edit_name_\\d+$"),
+        filters.regex(r"^svc_edit_name_\d+$"),
         group=-19
     )
     async def service_edit_name_callback(client, query):
