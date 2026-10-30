@@ -47,40 +47,40 @@ def create_backup(config=None):
         f"_snap_{stamp}.db"
     )
 
-    if os.path.exists(DB_PATH):
+    try:
+        if os.path.exists(DB_PATH):
+            source = sqlite3.connect(DB_PATH, timeout=30)
+            snapshot = sqlite3.connect(snap_path, timeout=30)
+            try:
+                source.backup(snapshot)
+                integrity = snapshot.execute("PRAGMA integrity_check").fetchone()
+                if not integrity or integrity[0] != "ok":
+                    raise RuntimeError("Database snapshot failed integrity_check.")
+            finally:
+                snapshot.close()
+                source.close()
 
-        source = sqlite3.connect(DB_PATH)
-        snapshot = sqlite3.connect(snap_path)
+        with zipfile.ZipFile(
+            zip_path,
+            "w",
+            zipfile.ZIP_DEFLATED
+        ) as zf:
+            if os.path.exists(snap_path):
+                zf.write(snap_path, "cafe_hermes.db")
 
-        try:
-            source.backup(snapshot)
-        finally:
-            snapshot.close()
-            source.close()
+            if os.path.exists(CONFIG_PATH):
+                zf.write(CONFIG_PATH, "config.json")
 
-    with zipfile.ZipFile(
-        zip_path,
-        "w",
-        zipfile.ZIP_DEFLATED
-    ) as zf:
+        return zip_path
 
+    except Exception:
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        raise
+
+    finally:
         if os.path.exists(snap_path):
-            zf.write(
-                snap_path,
-                "cafe_hermes.db"
-            )
-
-        if os.path.exists(CONFIG_PATH):
-            zf.write(
-                CONFIG_PATH,
-                "config.json"
-            )
-
-    if os.path.exists(snap_path):
-        os.remove(snap_path)
-
-    return zip_path
-
+            os.remove(snap_path)
 
 def _extract_member(
     zf,
