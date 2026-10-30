@@ -19,7 +19,9 @@ from bot.database import (
     use_coupon,
     reset_low_volume_warning,
     get_tutorials,
-    get_tutorial
+    get_tutorial,
+    get_invoice,
+    set_invoice_receipt
 )
 
 from bot.helpers import (
@@ -1024,6 +1026,28 @@ def register(app, config):
 
         state = user_states.get(user_id)
 
+        invoice_id = state.get("invoice_id") if state else None
+        if invoice_id:
+            invoice = get_invoice(invoice_id)
+            if not invoice or invoice["user_id"] != user_id or invoice["status"] != "pending":
+                await message.reply_text("این فاکتور معتبر یا در انتظار پرداخت نیست.")
+                return
+            stored = await store_media_message(message)
+            receipt_id = stored.get("file_id") if stored and stored.get("file_id") else message.photo.file_id
+            if not set_invoice_receipt(invoice_id, receipt_id):
+                await message.reply_text("ثبت رسید انجام نشد؛ دوباره تلاش کنید.")
+                return
+            user_states.pop(user_id, None)
+            for admin_id in config.get("admin_ids", []):
+                try:
+                    await client.send_photo(admin_id, message.photo.file_id,
+                        caption=f"رسید فاکتور #{invoice_id} | مشتری {user_id} | مبلغ {format_price(invoice['total_amount'])} تومان",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("تأیید پرداخت", callback_data=f"admin_invoice_approve_{invoice_id}")]]))
+                except Exception as e:
+                    print(f"Invoice receipt notify error: {e}")
+            await message.reply_text("رسید فاکتور دریافت و برای مدیریت ارسال شد.", reply_markup=_menu(config, user_id))
+            return
+
         order_id = None
 
         if state:
@@ -1148,6 +1172,19 @@ def register(app, config):
             reply_markup=_menu(config, user_id)
         )
 
+    @app.on_callback_query(filters.regex("^invoice_pay_[0-9]+$"))
+    async def invoice_pay(client, query):
+        invoice_id = int(query.data.split("_")[-1])
+        invoice = get_invoice(invoice_id)
+        if not invoice or invoice["user_id"] != query.from_user.id:
+            await query.answer("این فاکتور متعلق به شما نیست.", show_alert=True)
+            return
+        if invoice["status"] != "pending":
+            await query.answer("این فاکتور قبلاً تعیین تکلیف شده است.", show_alert=True)
+            return
+        user_states[query.from_user.id] = {"step": "waiting_invoice_receipt", "invoice_id": invoice_id}
+        await query.message.reply_text(f"مبلغ قابل پرداخت: {format_price(invoice['total_amount'])} تومان. پس از پرداخت عکس رسید را ارسال کنید.")
+        await query.answer()
     @app.on_callback_query(
         filters.regex(r"^sub_\d+$")
     )
