@@ -656,12 +656,9 @@ async def _create_or_replace_channel_state(
     archive_path,
     state_message_id=None
 ):
-    # Keep every historical snapshot as a separate Telegram post. The newest
-    # snapshot is pinned so restore_from_remote can always find the latest one.
+    # Keep one current backup message per channel. Telegram supports replacing
+    # the document media in-place, so the message id and its pin remain stable.
     existing = await _get_state_message(chat_id, marker)
-    old_message_id = None
-    if existing:
-        old_message_id = existing.get("message_id") or existing.get("id")
 
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     caption = (
@@ -669,6 +666,32 @@ async def _create_or_replace_channel_state(
         f"Contains: {label}\n"
         f"Backup time: {stamp}"
     )
+
+    if existing:
+        message_id = existing.get("message_id") or existing.get("id")
+        if not message_id:
+            raise RuntimeError("Existing Telegram backup message has no message_id.")
+
+        # Never fall back to sending a new post if editing fails: doing so
+        # would recreate the unbounded archive accumulation this avoids.
+        # The old document remains available and sync_all will retry later.
+        edited = await _edit_document(
+            chat_id,
+            message_id,
+            archive_path,
+            caption
+        )
+        if not edited:
+            raise RuntimeError("Telegram did not confirm the backup message edit.")
+
+        print(
+            f"Remote Storage: updated existing {label} backup "
+            f"in message {message_id}."
+        )
+        return message_id
+
+    # First run (or missing pinned restore point): create and pin the initial
+    # state message. Subsequent syncs will edit this same message in-place.
     sent = await _send_document(chat_id, archive_path, caption)
     if not sent:
         raise RuntimeError("Telegram did not return the uploaded backup message.")
@@ -677,20 +700,7 @@ async def _create_or_replace_channel_state(
     if not message_id:
         raise RuntimeError("Telegram backup message has no message_id.")
 
-    try:
-        await _pin_message(chat_id, message_id)
-    except Exception as e:
-        # The uploaded archive is still a valid historical backup. Keep the
-        # previous pinned restore point intact if pin permissions are missing.
-        print(f"Remote Storage: new backup uploaded but pin failed: {e}")
-        return message_id
-
-    if old_message_id and old_message_id != message_id:
-        try:
-            await _unpin_message(chat_id, old_message_id)
-        except Exception as e:
-            print(f"Remote Storage: previous backup unpin warning: {e}")
-
+    await _pin_message(chat_id, message_id)
     return message_id
 
 
