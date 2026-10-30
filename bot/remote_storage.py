@@ -245,32 +245,60 @@ async def stop_storage():
     global _db_state_message_id
     global _config_state_message_id
 
-    for task_name in (
-        "_watcher_task",
-        "_sync_task"
-    ):
-        task = globals().get(task_name)
+    # Stop the file watcher first so no new work is queued while shutting down.
+    if _watcher_task:
+        _watcher_task.cancel()
+        try:
+            await _watcher_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+    _watcher_task = None
 
-        if task:
+    # Give an in-flight sync a chance to finish. If it keeps retrying, cancel
+    # it and make one bounded final attempt for the latest committed state.
+    if _sync_task and not _sync_task.done():
+        try:
+            await asyncio.wait_for(_sync_task, timeout=20)
+        except asyncio.TimeoutError:
+            _sync_task.cancel()
             try:
-                task.cancel()
-                await task
+                await _sync_task
             except asyncio.CancelledError:
                 pass
-            except Exception:
-                pass
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"Remote Storage: shutdown sync wait error: {e}")
 
-    _watcher_task = None
+    if _storage_started and _dirty:
+        try:
+            await asyncio.wait_for(sync_all(force=True), timeout=45)
+        except asyncio.TimeoutError:
+            print("Remote Storage: final shutdown sync timed out; latest changes may not be remote yet.")
+        except Exception as e:
+            print(f"Remote Storage: final shutdown sync error: {e}")
+
+    _storage_started = False
+
+    if _sync_task and not _sync_task.done():
+        _sync_task.cancel()
+        try:
+            await _sync_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
     _sync_task = None
     _storage_app = None
     _storage_data_chat_id = None
     _storage_config_chat_id = None
     _storage_files_chat_id = None
-    _storage_started = False
     _dirty = False
     _db_state_message_id = None
     _config_state_message_id = None
-
 
 def _data_chat_id():
     if _storage_data_chat_id is not None:
