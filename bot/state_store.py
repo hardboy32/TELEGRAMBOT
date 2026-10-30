@@ -2,6 +2,7 @@ import json
 import os
 import sqlite3
 import time
+from contextlib import contextmanager
 from collections.abc import MutableMapping
 
 from bot import database
@@ -57,6 +58,18 @@ class PersistentStateMap(MutableMapping):
     def _path(self):
         return self.db_path or database.DB_PATH
 
+    @contextmanager
+    def _connection(self):
+        conn = self._connect()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def _connect(self):
         path = self._path()
         parent = os.path.dirname(os.path.abspath(path))
@@ -77,7 +90,7 @@ class PersistentStateMap(MutableMapping):
     def _save(self, user_id, state):
         now = time.time()
         payload = json.dumps(dict(state), ensure_ascii=False, separators=(",", ":"))
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute("""
                 INSERT INTO workflow_states
                     (namespace, user_id, payload, updated_at, expires_at)
@@ -93,7 +106,7 @@ class PersistentStateMap(MutableMapping):
 
     def __getitem__(self, user_id):
         now = time.time()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "DELETE FROM workflow_states WHERE namespace = ? AND expires_at <= ?",
                 (self.namespace, now)
@@ -118,7 +131,7 @@ class PersistentStateMap(MutableMapping):
         self._save(user_id, state)
 
     def __delitem__(self, user_id):
-        with self._connect() as conn:
+        with self._connection() as conn:
             cursor = conn.execute(
                 "DELETE FROM workflow_states WHERE namespace = ? AND user_id = ?",
                 (self.namespace, str(user_id))
@@ -128,7 +141,7 @@ class PersistentStateMap(MutableMapping):
 
     def __iter__(self):
         now = time.time()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "DELETE FROM workflow_states WHERE namespace = ? AND expires_at <= ?",
                 (self.namespace, now)
@@ -141,7 +154,7 @@ class PersistentStateMap(MutableMapping):
 
     def __len__(self):
         now = time.time()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "DELETE FROM workflow_states WHERE namespace = ? AND expires_at <= ?",
                 (self.namespace, now)
@@ -163,7 +176,7 @@ class PersistentStateMap(MutableMapping):
         return dict(value)
 
     def clear(self):
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "DELETE FROM workflow_states WHERE namespace = ?",
                 (self.namespace,)
