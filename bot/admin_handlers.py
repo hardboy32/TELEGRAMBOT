@@ -1,4 +1,5 @@
 import os
+import html
 from pyrogram import filters, StopPropagation, enums
 from pyrogram.errors import MessageNotModified
 from pyrogram.types import (
@@ -1152,6 +1153,14 @@ def register(app, config):
 
                 raise StopPropagation
 
+            if (order.get("status") != "approved"
+                    or not str(order.get("receipt_file_id") or "").strip()):
+                admin_states.pop(user_id, None)
+                await message.reply_text(
+                    "⛔ ثبت کانفیگ فقط پس از تأیید پرداخت و وجود رسید امکان‌پذیر است."
+                )
+                raise StopPropagation
+
             config_text = text
 
             save_subscription(
@@ -1177,7 +1186,7 @@ def register(app, config):
                     f"📦 سرویس: {order['service_name']}\n"
                     f"👤 نام کاربری: <code>{order['username']}</code>\n\n"
                     "⚙️ کانفیگ شما:\n\n"
-                    f"<code>{config_text}</code>\n\n"
+                    f"<code>{html.escape(config_text)}</code>\n\n"
                     "✅ اشتراک شما فعال شد.",
                     parse_mode=enums.ParseMode.HTML
                 )
@@ -2035,6 +2044,14 @@ def register(app, config):
                 show_alert=True
             )
 
+            return
+
+        if (order.get("status") != "approved"
+                or not str(order.get("receipt_file_id") or "").strip()):
+            await query.answer(
+                "⛔ ابتدا باید رسید سفارش ثبت و پرداخت آن تأیید شود.",
+                show_alert=True
+            )
             return
 
         admin_states[
