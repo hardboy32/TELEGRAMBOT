@@ -11,12 +11,27 @@ def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+class _BackupAwareConnection(sqlite3.Connection):
+    """Schedule a remote snapshot after every committed database change."""
+
+    def commit(self):
+        super().commit()
+        try:
+            from bot.remote_storage import schedule_sync
+            schedule_sync()
+        except Exception:
+            # Startup, tests, and offline operation must not fail because
+            # remote storage is unavailable; the file watcher is the fallback.
+            pass
+
+
 def get_connection():
     os.makedirs("data", exist_ok=True)
 
     conn = sqlite3.connect(
         DB_PATH,
-        timeout=30
+        timeout=30,
+        factory=_BackupAwareConnection
     )
 
     conn.row_factory = sqlite3.Row
