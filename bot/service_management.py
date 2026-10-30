@@ -62,7 +62,7 @@ def _service_list_keyboard(services):
         rows.append(
             [
                 InlineKeyboardButton(
-                    f"{status} {service['volume_gb']}GB | "
+                    f"{status} {service['name']} | {service['volume_gb']}GB | "
                     f"{format_price(service['price'])} تومان",
                     callback_data=f"admin_service_{service['id']}"
                 )
@@ -136,7 +136,7 @@ def _service_list_text(services):
     for index, service in enumerate(services, start=1):
         status = "🟢 فعال" if service["active"] else "🔴 غیرفعال"
         lines.append(
-            f"{index}. 📦 {service['volume_gb']}GB | "
+            f"{index}. 📦 {service['name']} | {service['volume_gb']}GB | "
             f"💰 {format_price(service['price'])} تومان | {status}"
         )
 
@@ -148,6 +148,7 @@ def _service_detail_text(service):
 
     return (
         "📦 جزئیات سرویس\n\n"
+        f"🏷 نام: {service['name']}\n"
         f"💾 حجم: {service['volume_gb']}GB\n"
         f"💰 قیمت: {format_price(service['price'])} تومان\n"
         f"🔘 وضعیت: {status}"
