@@ -38,6 +38,9 @@ class _PersistentState(dict):
         self._save_callback(self)
 
 
+_MISSING = object()
+
+
 class PersistentStateMap(MutableMapping):
     """SQLite-backed mapping for short-lived user/admin conversation states.
 
@@ -149,11 +152,11 @@ class PersistentStateMap(MutableMapping):
             ).fetchone()
         return int(row[0])
 
-    def pop(self, user_id, default=None):
+    def pop(self, user_id, default=_MISSING):
         try:
             value = self[user_id]
         except KeyError:
-            if default is not None:
+            if default is not _MISSING:
                 return default
             raise
         self.__delitem__(user_id)
