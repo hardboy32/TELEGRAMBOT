@@ -117,7 +117,7 @@ def find_value(text, labels):
     return "نامشخص"
 
 
-def remaining_less_than_one_gb(remaining):
+def remaining_less_than_one_gb(remaining, threshold_gb=1):
     if not remaining:
         return False
 
@@ -126,13 +126,13 @@ def remaining_less_than_one_gb(remaining):
     try:
         if "gb" in text:
             number = float(text.replace("gb", "").strip())
-            return number < 1
+            return number < float(threshold_gb)
 
         if "mb" in text:
             number = float(text.replace("mb", "").strip())
-            return number < 1024
+            return number < float(threshold_gb) * 1024
 
-    except ValueError:
+    except (TypeError, ValueError):
         pass
 
     return False
@@ -153,7 +153,7 @@ async def check_low_volume_once(client, config):
             continue
 
         remaining = result.get("remaining")
-        if remaining_less_than_one_gb(remaining):
+        if remaining_less_than_one_gb(remaining, config.get("low_volume_gb", 1)):
             low_users.setdefault(subscription["user_id"], []).append({
                 "username": subscription.get("username") or "نامشخص",
                 "service_name": subscription.get("service_name") or "اشتراک",
