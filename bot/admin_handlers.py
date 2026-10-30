@@ -2717,8 +2717,10 @@ def register(app, config):
             return
         invoice_id = int(query.data.split("_")[-1])
         invoice = get_invoice(invoice_id)
-        if not invoice or invoice.get("status") != "pending" or not invoice.get("approval_required", 1):
-            await query.answer("فاکتور برای ثبت پرداخت جزئی معتبر نیست.", show_alert=True)
+        if (not invoice or invoice.get("status") != "pending"
+                or not invoice.get("approval_required", 1)
+                or not str(invoice.get("receipt_file_id") or "").strip()):
+            await query.answer("فاکتور یا رسید برای ثبت پرداخت جزئی معتبر نیست.", show_alert=True)
             return
         admin_states[query.from_user.id] = {
             "step": "invoice_partial_amount", "invoice_id": invoice_id
