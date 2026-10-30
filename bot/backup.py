@@ -128,6 +128,9 @@ def _extract_member(
 
 def inspect_backup(zip_path):
 
+    # Restore may be the first backup-related operation on a fresh instance.
+    _ensure_dirs()
+
     if not zip_path or not os.path.exists(zip_path):
 
         return {
@@ -218,6 +221,14 @@ def inspect_backup(zip_path):
                 conn.row_factory = sqlite3.Row
 
                 cur = conn.cursor()
+
+                integrity = cur.execute("PRAGMA integrity_check").fetchone()
+                if not integrity or integrity[0] != "ok":
+                    conn.close()
+                    return {
+                        "ok": False,
+                        "message": "ساختار دیتابیس بکاپ خراب است."
+                    }
 
                 tables = [
                     row["name"]
