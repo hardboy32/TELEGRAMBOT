@@ -56,7 +56,13 @@ from bot.database import (
     update_tutorial_field,
     add_tutorial,
     toggle_tutorial,
-    delete_tutorial
+    delete_tutorial,
+    get_customer_balance,
+    add_customer_ledger_entry,
+    get_customer_ledger,
+    create_invoice,
+    get_invoice,
+    get_user_invoices
 )
 
 
@@ -443,6 +449,18 @@ def user_detail_keyboard(user_id):
                 InlineKeyboardButton(
                     "➕ افزودن اشتراک دستی",
                     callback_data=f"admin_uaddsub_{user_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🧾 ساخت فاکتور",
+                    callback_data=f"admin_invoice_{user_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "💰 حساب بدهی/طلب",
+                    callback_data=f"admin_ledger_{user_id}"
                 )
             ],
             [
@@ -871,6 +889,80 @@ def register(app, config):
             raise StopPropagation
 
         state = admin_states.get(user_id)
+
+        if state and state.get("step") == "ledger_amount":
+            try:
+                amount = int(text.replace(",", "").replace("٬", ""))
+                if amount == 0:
+                    raise ValueError
+            except ValueError:
+                await message.reply_text("مبلغ را به عدد صحیح و غیرصفر وارد کنید.")
+                raise StopPropagation
+            state["amount"] = amount
+            state["step"] = "ledger_description"
+            await message.reply_text("شرح این تغییر حساب را وارد کنید:")
+            raise StopPropagation
+
+        if state and state.get("step") == "ledger_description":
+            add_customer_ledger_entry(
+                state["target_id"], state["amount"], text, created_by=user_id
+            )
+            target_id = state["target_id"]
+            admin_states.pop(user_id, None)
+            balance = get_customer_balance(target_id)
+            label = "بدهکار" if balance > 0 else ("بستانکار" if balance < 0 else "تسویه")
+            await message.reply_text(
+                f"✅ گردش حساب ثبت شد.\nمانده فعلی: {format_price(abs(balance))} تومان ({label})"
+            )
+            raise StopPropagation
+
+        if state and state.get("step") == "invoice_title":
+            state["title"] = text
+            state["step"] = "invoice_amount"
+            await message.reply_text("مبلغ پایه فاکتور را به تومان وارد کنید:")
+            raise StopPropagation
+
+        if state and state.get("step") == "invoice_amount":
+            try:
+                amount = int(text.replace(",", "").replace("٬", ""))
+                if amount < 0:
+                    raise ValueError
+            except ValueError:
+                await message.reply_text("مبلغ باید عدد صحیح و صفر یا بیشتر باشد.")
+                raise StopPropagation
+            state["amount"] = amount
+            state["step"] = "invoice_description"
+            await message.reply_text("توضیحات فاکتور را وارد کنید؛ برای بدون توضیح یک - بفرستید:")
+            raise StopPropagation
+
+        if state and state.get("step") == "invoice_description":
+            description = "" if text == "-" else text
+            target_id = state["target_id"]
+            invoice_id = create_invoice(
+                target_id, state["title"], state["amount"], description,
+                created_by=user_id
+            )
+            invoice = get_invoice(invoice_id)
+            admin_states.pop(user_id, None)
+            try:
+                await client.send_message(
+                    target_id,
+                    "🧾 فاکتور جدید\n\n"
+                    f"شماره فاکتور: #{invoice_id}\n"
+                    f"شرح: {invoice['title']}\n"
+                    + (f"توضیحات: {description}\n" if description else "")
+                    + f"مبلغ پایه: {format_price(invoice['base_amount'])} تومان\n"
+                    + f"مانده قبلی: {format_price(invoice['balance_before'])} تومان\n"
+                    + f"مبلغ قابل پرداخت: {format_price(invoice['total_amount'])} تومان\n\n"
+                    "برای ارسال رسید، دکمه زیر را بزنید.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("💳 پرداخت فاکتور", callback_data=f"invoice_pay_{invoice_id}")
+                    ]])
+                )
+                await message.reply_text(f"✅ فاکتور #{invoice_id} برای کاربر ارسال شد.")
+            except Exception as e:
+                await message.reply_text(f"فاکتور #{invoice_id} ساخته شد اما ارسال نشد: {e}")
+            raise StopPropagation
 
         # =====================================================
         # اگر ادمین در هیچ حالت مدیریتی نیست،
