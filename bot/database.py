@@ -790,6 +790,17 @@ def get_subscription(subscription_id):
 
     return dict(row) if row else None
 
+def get_subscription_by_order(order_id):
+    conn = get_connection()
+    row = conn.execute("""
+        SELECT * FROM subscriptions
+        WHERE order_id = ?
+        ORDER BY id ASC
+        LIMIT 1
+    """, (order_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
 
 def update_subscription_status(subscription_id, status):
     conn = get_connection()
