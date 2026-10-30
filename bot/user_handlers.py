@@ -1205,8 +1205,20 @@ def register(app, config):
         if invoice["status"] != "pending":
             await query.answer("این فاکتور قبلاً تعیین تکلیف شده است.", show_alert=True)
             return
+        if int(invoice.get("total_amount") or 0) == 0:
+            if mark_invoice_paid(invoice_id):
+                await query.message.reply_text("✅ مبلغ فاکتور با اعتبار حساب شما تسویه شد.")
+                await query.answer("فاکتور تسویه شد.")
+            else:
+                await query.answer("تسویه فاکتور انجام نشد؛ با پشتیبانی تماس بگیرید.", show_alert=True)
+            return
         user_states[query.from_user.id] = {"step": "waiting_invoice_receipt", "invoice_id": invoice_id}
-        await query.message.reply_text(f"مبلغ قابل پرداخت: {format_price(invoice['total_amount'])} تومان. پس از پرداخت عکس رسید را ارسال کنید.")
+        await query.message.reply_text(
+            f"💰 مبلغ قابل پرداخت: {format_price(invoice['total_amount'])} تومان\n"
+            f"💳 شماره کارت: {config.get('payment_card', 'YOUR_CARD')}\n"
+            f"👤 صاحب کارت: {config.get('payment_name', 'CARD_OWNER')}\n\n"
+            "پس از پرداخت، عکس رسید را ارسال کنید."
+        )
         await query.answer()
     @app.on_callback_query(
         filters.regex(r"^sub_\d+$")
