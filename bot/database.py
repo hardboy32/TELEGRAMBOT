@@ -458,7 +458,17 @@ def record_invoice_partial_payment(invoice_id, amount, created_by=None):
             WHERE id = ? AND status = 'pending'
         """, (now(), new_paid, invoice_id))
         old_balance = int(invoice.get("balance_before") or 0)
-        settlement = -old_balance if old_balance > 0 else min(-old_balance, int(invoice["base_amount"]))
+        current_row = cur.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS balance FROM customer_ledger WHERE user_id = ?",
+            (invoice["user_id"],)
+        ).fetchone()
+        current_balance = int(current_row["balance"] or 0)
+        if old_balance > 0 and current_balance > 0:
+            settlement = -min(old_balance, current_balance)
+        elif old_balance < 0 and current_balance < 0:
+            settlement = min(-old_balance, -current_balance, int(invoice["base_amount"]))
+        else:
+            settlement = 0
         if settlement:
             cur.execute("""
                 INSERT INTO customer_ledger (user_id, amount, description, created_at, created_by)
@@ -594,7 +604,17 @@ def approve_order(order_id, created_by=None):
         conn.close()
         return False
     old_balance = int(order.get("balance_before") or 0)
-    settlement = -old_balance if old_balance > 0 else min(-old_balance, int(order["final_price"]))
+    current_row = cur.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS balance FROM customer_ledger WHERE user_id = ?",
+        (order["user_id"],)
+    ).fetchone()
+    current_balance = int(current_row["balance"] or 0)
+    if old_balance > 0 and current_balance > 0:
+        settlement = -min(old_balance, current_balance)
+    elif old_balance < 0 and current_balance < 0:
+        settlement = min(-old_balance, -current_balance, int(order["final_price"]))
+    else:
+        settlement = 0
     if settlement:
         cur.execute("""
             INSERT INTO customer_ledger (user_id, amount, description, created_at, created_by)
@@ -1435,8 +1455,19 @@ def mark_invoice_paid(invoice_id, created_by=None, paid_amount=None):
         conn.close()
         return False
     old_balance = int(invoice["balance_before"] or 0)
-    # Positive = debt, negative = credit. Never consume more credit than base price.
-    settlement = -old_balance if old_balance > 0 else min(-old_balance, int(invoice["base_amount"]))
+    current_row = cur.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS balance FROM customer_ledger WHERE user_id = ?",
+        (invoice["user_id"],)
+    ).fetchone()
+    current_balance = int(current_row["balance"] or 0)
+    # Settle only the captured balance that still exists; another invoice/order
+    # may already have settled it.
+    if old_balance > 0 and current_balance > 0:
+        settlement = -min(old_balance, current_balance)
+    elif old_balance < 0 and current_balance < 0:
+        settlement = min(-old_balance, -current_balance, int(invoice["base_amount"]))
+    else:
+        settlement = 0
     if settlement:
         cur.execute("""
             INSERT INTO customer_ledger (user_id, amount, description, created_at, created_by)
