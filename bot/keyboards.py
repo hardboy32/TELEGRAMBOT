@@ -10,17 +10,17 @@ def main_menu(config, is_admin=False):
 
     buttons = []
 
-    # خرید همیشه نمایش داده می‌شود.
-    # باز یا بسته بودن فروش جداگانه کنترل می‌شود.
-    buttons.append(
-        KeyboardButton("🛒 خرید سرویس")
-    )
+    # Visibility toggles are independent from the temporary store open/close
+    # controls enforced by store_control.py and the order callbacks.
+    if config.get("buy_enabled", True):
+        buttons.append(
+            KeyboardButton("🛒 خرید سرویس")
+        )
 
-    # تمدید همیشه نمایش داده می‌شود.
-    # باز یا بسته بودن تمدید جداگانه کنترل می‌شود.
-    buttons.append(
-        KeyboardButton("🔄 تمدید")
-    )
+    if config.get("renew_enabled", True):
+        buttons.append(
+            KeyboardButton("🔄 تمدید")
+        )
 
     # اشتراک‌های من
     # وضعیت اشتراک هم داخل همین قسمت نمایش داده می‌شود.
