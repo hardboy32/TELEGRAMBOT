@@ -64,6 +64,14 @@ def register(app, config):
             await message.reply_text("⛔ گزینه خرید سرویس فعلاً غیرفعال است.")
             raise StopPropagation
 
+        previous = user_states.get(user_id) or {}
+        if previous.get("step") in ("waiting_receipt", "waiting_invoice_receipt"):
+            await message.reply_text(
+                "⏳ یک پرداخت ناتمام دارید. ابتدا رسید همان پرداخت را ارسال کنید "
+                "یا با «❌ لغو سفارش» آن را لغو کنید."
+            )
+            raise StopPropagation
+
         services = get_services(True)
 
         if not services:
