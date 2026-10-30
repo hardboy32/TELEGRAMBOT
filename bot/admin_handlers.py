@@ -411,6 +411,12 @@ def order_keyboard(order_id):
             ],
             [
                 InlineKeyboardButton(
+                    "🗑 حذف سفارش بدون اطلاع کاربر",
+                    callback_data=f"admin_delete_silent_{order_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     "⬅️ بازگشت",
                     callback_data="admin_pending"
                 )
@@ -1843,6 +1849,44 @@ def register(app, config):
         await query.answer(
             "سفارش رد شد."
         )
+
+    # =========================================================
+    # حذف بی‌سروصدای سفارش (بدون پیام به مشتری)
+    # =========================================================
+
+    @app.on_callback_query(
+        filters.regex(r"^admin_delete_silent_\d+$")
+    )
+    async def admin_delete_silent(client, query):
+
+        if not admin(query.from_user.id, config):
+            await query.answer("❌ دسترسی ندارید.", show_alert=True)
+            return
+
+        order_id = int(query.data.rsplit("_", 1)[1])
+        order = get_order(order_id)
+
+        if not order:
+            await query.answer("❌ سفارش پیدا نشد.", show_alert=True)
+            return
+
+        if order.get("status") != "pending":
+            await query.answer(
+                "⚠️ فقط سفارش‌های در انتظار را می‌توان از این بخش حذف کرد.",
+                show_alert=True
+            )
+            return
+
+        # Intentionally do not send any message to the customer.
+        delete_order(order_id)
+
+        await query.message.edit_text(
+            f"🗑 سفارش #{order_id} بدون ارسال پیام به مشتری حذف شد.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ بازگشت به سفارش‌های دارای فیش", callback_data="admin_pending")]
+            ])
+        )
+        await query.answer("سفارش بدون اطلاع مشتری حذف شد.")
 
     # =========================================================
     # ثبت کانفیگ
