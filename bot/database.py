@@ -482,6 +482,19 @@ def record_invoice_partial_payment(invoice_id, amount, created_by=None):
         conn.close()
         return None
     invoice = dict(row)
+    other_order = cur.execute(
+        "SELECT id FROM orders WHERE user_id = ? AND status = 'pending' LIMIT 1",
+        (invoice["user_id"],)
+    ).fetchone()
+    other_invoice = cur.execute("""
+        SELECT id FROM invoices
+        WHERE user_id = ? AND status = 'pending' AND approval_required = 1 AND id != ?
+        LIMIT 1
+    """, (invoice["user_id"], invoice_id)).fetchone()
+    if other_order or other_invoice:
+        conn.rollback()
+        conn.close()
+        return None
     old_paid = int(invoice.get("paid_amount") or 0)
     remaining = max(0, int(invoice["total_amount"]) - old_paid)
     if amount > remaining:
