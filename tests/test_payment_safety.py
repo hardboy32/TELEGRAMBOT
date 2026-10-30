@@ -47,10 +47,13 @@ class PaymentSafetyTests(unittest.TestCase):
     def test_invoice_partial_payments_keep_individual_receipt_history(self):
         invoice_id = database.create_invoice(100, "Invoice", 1000)
         self.assertTrue(database.set_invoice_receipt(invoice_id, "receipt-one"))
+        total = int(database.get_invoice(invoice_id)["total_amount"])
         first = database.record_invoice_partial_payment(invoice_id, 500, created_by=9)
-        self.assertEqual(first["remaining"], 1000)
+        self.assertEqual(first["remaining"], total - 500)
         self.assertTrue(database.set_invoice_receipt(invoice_id, "receipt-two"))
-        second = database.record_invoice_partial_payment(invoice_id, 1000, created_by=9)
+        second = database.record_invoice_partial_payment(
+            invoice_id, total - 500, created_by=9
+        )
         self.assertTrue(second["completed"])
         payments = database.get_invoice_payments(invoice_id)
         self.assertEqual([p["amount"] for p in payments], [500, 1000])
