@@ -175,7 +175,8 @@ async def main():
         init_db()
 
         # Migrate legacy payment details out of config.json into the private
-        # SQLite settings table. Environment variables take precedence.
+        # SQLite settings table. Existing DB settings are canonical; env vars
+        # seed a fresh DB and legacy config is the final migration fallback.
         for key, env_name in (
             ("payment_card", "PAYMENT_CARD"),
             ("payment_name", "PAYMENT_NAME"),
@@ -184,10 +185,10 @@ async def main():
             stored_value = get_setting(key)
             legacy_value = config.get(key)
 
-            if env_value:
-                value = env_value.strip()
-            elif stored_value:
+            if stored_value:
                 value = stored_value
+            elif env_value:
+                value = env_value.strip()
             else:
                 value = legacy_value or ""
 
