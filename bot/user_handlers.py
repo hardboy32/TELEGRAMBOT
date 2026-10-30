@@ -991,15 +991,16 @@ def register(app, config):
             order_created(order_id, order_type)
         )
 
+        order = get_order(order_id)
+        expected = order.get("expected_total", order.get("final_price", final_price)) if order else final_price
         await query.message.reply_text(
-            payment(
+            f"💰 مبلغ قابل پرداخت با احتساب مانده حساب: {format_price(expected)} تومان\n\n"
+            + payment(
                 config.get("payment_card", "YOUR_CARD"),
                 config.get("payment_name", "CARD_OWNER")
             ),
             parse_mode=enums.ParseMode.HTML,
-            reply_markup=payment_reply_keyboard(
-                admin(user_id, config)
-            )
+            reply_markup=payment_reply_keyboard(admin(user_id, config))
         )
 
         await query.answer()
@@ -1077,14 +1078,8 @@ def register(app, config):
         if state:
             order_id = state.get("order_id")
 
-        if not order_id:
-            orders = get_user_orders(user_id)
-
-            for order in orders:
-                if order["status"] == "pending":
-                    order_id = order["id"]
-                    break
-
+        # A receipt must belong to the exact order the user is currently paying.
+        # Never guess by attaching it to the oldest pending order.
         if not order_id:
 
             await message.reply_text(
