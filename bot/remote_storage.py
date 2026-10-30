@@ -61,8 +61,9 @@ _TEMP_DIRS = (
     "data/.remote_state_restore",
 )
 
-# Avoid rebuilding/uploading full database archives for every small write.
-MIN_SYNC_INTERVAL = 60
+# Each committed database change schedules a fresh Telegram snapshot.
+# A short debounce merges only writes that happen in the same burst.
+MIN_SYNC_INTERVAL = 0
 _last_sync_at = 0.0
 
 _dirty = False
@@ -638,6 +639,16 @@ async def _pin_message(
     )
 
 
+async def _unpin_message(chat_id, message_id):
+    return await _bot_api(
+        "unpinChatMessage",
+        {
+            "chat_id": chat_id,
+            "message_id": message_id
+        }
+    )
+
+
 async def _create_or_replace_channel_state(
     chat_id,
     marker,
@@ -645,68 +656,34 @@ async def _create_or_replace_channel_state(
     archive_path,
     state_message_id=None
 ):
-    existing = await _get_state_message(
-        chat_id,
-        marker
-    )
+    # Keep every historical snapshot as a separate Telegram post. The newest
+    # snapshot is pinned so restore_from_remote can always find the latest one.
+    existing = await _get_state_message(chat_id, marker)
+    old_message_id = None
+    if existing:
+        old_message_id = existing.get("message_id") or existing.get("id")
 
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     caption = (
         f"{marker}\n"
         f"Contains: {label}\n"
-        f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        f"Backup time: {stamp}"
     )
-
-    if existing:
-        existing_id = (
-            existing.get("message_id")
-            or existing.get("id")
-        )
-
-        try:
-            edited = await _edit_document(
-                chat_id,
-                existing_id,
-                archive_path,
-                caption
-            )
-
-            return (
-                edited.get("message_id")
-                if isinstance(edited, dict)
-                else existing_id
-            )
-
-        except Exception as e:
-            print(
-                f"Remote Storage: state edit failed: {e}"
-            )
-
-    sent = await _send_document(
-        chat_id,
-        archive_path,
-        caption
-    )
-
+    sent = await _send_document(chat_id, archive_path, caption)
     if not sent:
-        raise RuntimeError(
-            "Telegram did not return the uploaded state message."
-        )
+        raise RuntimeError("Telegram did not return the uploaded backup message.")
 
-    message_id = (
-        sent.get("message_id")
-        or sent.get("id")
-    )
+    message_id = sent.get("message_id") or sent.get("id")
+    if not message_id:
+        raise RuntimeError("Telegram backup message has no message_id.")
 
-    try:
-        await _pin_message(
-            chat_id,
-            message_id
-        )
-    except Exception as e:
-        print(
-            f"Remote Storage: pin failed: {e}"
-        )
+    if old_message_id and old_message_id != message_id:
+        try:
+            await _unpin_message(chat_id, old_message_id)
+        except Exception as e:
+            print(f"Remote Storage: previous backup unpin warning: {e}")
 
+    await _pin_message(chat_id, message_id)
     return message_id
 
 
@@ -807,7 +784,7 @@ async def _sync_worker():
     global _dirty
 
     try:
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(0.5)
 
         while (
             _storage_started
@@ -853,7 +830,7 @@ async def _watch_files():
 
     while _storage_started:
         try:
-            await asyncio.sleep(10)
+            await asyncio.sleep(1)
 
             db_mtime = _mtime(
                 DB_PATH
