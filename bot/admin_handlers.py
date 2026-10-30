@@ -2446,7 +2446,7 @@ def register(app, config):
 
 
 
-    @app.on_callback_query(filters.regex(r"^admin_ledger_\\d+$"))
+    @app.on_callback_query(filters.regex(r"^admin_ledger_\d+$"))
     async def admin_customer_ledger(client, query):
         if not admin(query.from_user.id, config):
             return
@@ -2465,7 +2465,7 @@ def register(app, config):
         ]), parse_mode=enums.ParseMode.HTML)
         await query.answer()
 
-    @app.on_callback_query(filters.regex(r"^admin_ledger_add_\\d+_(debt|credit)$"))
+    @app.on_callback_query(filters.regex(r"^admin_ledger_add_\d+_(debt|credit)$"))
     async def admin_customer_ledger_add(client, query):
         if not admin(query.from_user.id, config):
             return
@@ -2478,7 +2478,7 @@ def register(app, config):
         await query.message.reply_text("مبلغ را به تومان وارد کنید:")
         await query.answer()
 
-    @app.on_callback_query(filters.regex(r"^admin_invoice_\\d+$"))
+    @app.on_callback_query(filters.regex(r"^admin_invoice_\d+$"))
     async def admin_invoice_start(client, query):
         if not admin(query.from_user.id, config):
             return
@@ -2492,7 +2492,7 @@ def register(app, config):
         await query.message.reply_text("سرویس را انتخاب کنید یا فاکتور با مبلغ دلخواه بسازید:", reply_markup=InlineKeyboardMarkup(rows))
         await query.answer()
 
-    @app.on_callback_query(filters.regex(r"^admin_invoice_svc_\\d+_\\d+$"))
+    @app.on_callback_query(filters.regex(r"^admin_invoice_svc_\d+_\d+$"))
     async def admin_invoice_service(client, query):
         if not admin(query.from_user.id, config):
             return
@@ -2510,7 +2510,7 @@ def register(app, config):
         await query.message.reply_text(f"سرویس {service['name']} انتخاب شد. توضیحات را وارد کنید یا - بفرستید:")
         await query.answer()
 
-    @app.on_callback_query(filters.regex(r"^admin_invoice_custom_\\d+$"))
+    @app.on_callback_query(filters.regex(r"^admin_invoice_custom_\d+$"))
     async def admin_invoice_custom(client, query):
         if not admin(query.from_user.id, config):
             return
@@ -2519,7 +2519,7 @@ def register(app, config):
         await query.message.reply_text("عنوان فاکتور را وارد کنید:")
         await query.answer()
 
-    @app.on_callback_query(filters.regex(r"^admin_invoice_approve_\\d+$"))
+    @app.on_callback_query(filters.regex(r"^admin_invoice_approve_\d+$"))
     async def admin_invoice_approve(client, query):
         if not admin(query.from_user.id, config):
             return
