@@ -813,10 +813,32 @@ def update_subscription_status(subscription_id, status):
 
 def delete_order(order_id):
     conn = get_connection()
-    conn.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
+    order = cur.execute(
+        "SELECT status, coupon FROM orders WHERE id = ?",
+        (order_id,)
+    ).fetchone()
+
+    if not order:
+        conn.rollback()
+        conn.close()
+        return False
+
+    # A pending order reserves one coupon use. Releasing/deleting that order
+    # must return the reservation so abandoned orders do not exhaust coupons.
+    if order["status"] == "pending" and order["coupon"]:
+        cur.execute("""
+            UPDATE coupons
+            SET used_count = MAX(0, used_count - 1)
+            WHERE code = ?
+        """, (str(order["coupon"]).upper(),))
+
+    cur.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    deleted = cur.rowcount == 1
     conn.commit()
     conn.close()
-    return True
+    return deleted
 
 
 def update_order_status(order_id, status):
