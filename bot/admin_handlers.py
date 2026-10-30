@@ -1120,7 +1120,9 @@ def register(app, config):
                 config_text=config_text
             )
 
-            approve_order(order_id)
+            if not approve_order(order_id, created_by=query.from_user.id):
+            await query.answer("این سفارش قبلاً بررسی شده است.", show_alert=True)
+            return
 
             admin_states.pop(
                 user_id,
@@ -2552,8 +2554,10 @@ def register(app, config):
             return
         invoice_id = int(query.data.split("_")[-1])
         invoice = get_invoice(invoice_id)
-        if not invoice or invoice.get("status") != "pending" or not invoice.get("receipt_file_id"):
-            await query.answer("فاکتور یا رسید معتبر نیست.", show_alert=True)
+        if (not invoice or invoice.get("status") != "pending"
+                or not invoice.get("receipt_file_id")
+                or not invoice.get("approval_required", 1)):
+            await query.answer("فاکتور یا رسید معتبر نیست یا این فاکتور تأیید دستی نمی‌خواهد.", show_alert=True)
             return
         if not mark_invoice_paid(invoice_id, created_by=query.from_user.id):
             await query.answer("این فاکتور قبلاً بررسی شده.", show_alert=True)
