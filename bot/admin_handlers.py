@@ -2532,7 +2532,7 @@ def register(app, config):
                 + f"مانده قبلی: {format_price(invoice['balance_before'])} تومان\n"
                 + f"مبلغ قابل پرداخت: {format_price(invoice['total_amount'])} تومان\n"
                 + f"روش بررسی پرداخت: {approval_text}\n\n"
-                + payment(config.get("payment_card", "YOUR_CARD"), config.get("payment_name", "CARD_OWNER"))
+                + f"💳 شماره کارت: {config.get('payment_card', 'YOUR_CARD')}\n👤 صاحب کارت: {config.get('payment_name', 'CARD_OWNER')}"
                 + "\nپس از پرداخت، عکس رسید را از دکمه زیر ارسال کنید."
             )
             await client.send_message(
