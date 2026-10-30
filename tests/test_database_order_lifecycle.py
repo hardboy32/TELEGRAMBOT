@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 
@@ -16,6 +17,13 @@ class OrderCouponLifecycleTests(unittest.TestCase):
         database.DB_PATH = self.original_db_path
         self.temp_dir.cleanup()
 
+    def _coupon_used_count(self):
+        with sqlite3.connect(database.DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT used_count FROM coupons WHERE code = 'SAVE10'"
+            ).fetchone()
+        return row[0]
+
     def _create_coupon_order(self):
         self.assertTrue(database.create_coupon("SAVE10", 10, max_uses=1))
         return database.create_order(
@@ -32,10 +40,10 @@ class OrderCouponLifecycleTests(unittest.TestCase):
 
     def test_rejecting_pending_order_releases_coupon_reservation(self):
         order_id = self._create_coupon_order()
-        self.assertEqual(database.get_coupon("SAVE10")["used_count"], 1)
+        self.assertEqual(self._coupon_used_count(), 1)
 
         self.assertTrue(database.reject_order(order_id))
-        self.assertEqual(database.get_coupon("SAVE10")["used_count"], 0)
+        self.assertEqual(self._coupon_used_count(), 0)
         self.assertFalse(database.reject_order(order_id))
 
     def test_reopening_rejected_order_reserves_coupon_again(self):
@@ -43,11 +51,11 @@ class OrderCouponLifecycleTests(unittest.TestCase):
         self.assertTrue(database.reject_order(order_id))
 
         self.assertTrue(database.update_order_status(order_id, "pending"))
-        self.assertEqual(database.get_coupon("SAVE10")["used_count"], 1)
+        self.assertEqual(self._coupon_used_count(), 1)
 
         # The same order cannot reserve a second use while already pending.
         self.assertTrue(database.update_order_status(order_id, "pending"))
-        self.assertEqual(database.get_coupon("SAVE10")["used_count"], 1)
+        self.assertEqual(self._coupon_used_count(), 1)
 
     def test_reopening_fails_if_coupon_capacity_was_taken(self):
         order_id = self._create_coupon_order()
@@ -67,7 +75,7 @@ class OrderCouponLifecycleTests(unittest.TestCase):
         self.assertIsNotNone(other_order)
 
         self.assertFalse(database.update_order_status(order_id, "pending"))
-        self.assertEqual(database.get_coupon("SAVE10")["used_count"], 1)
+        self.assertEqual(self._coupon_used_count(), 1)
 
 
 if __name__ == "__main__":
