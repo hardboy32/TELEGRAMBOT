@@ -183,6 +183,17 @@ def init_db():
             created_by INTEGER
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS invoice_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            invoice_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL CHECK(amount > 0),
+            receipt_file_id TEXT,
+            created_at TEXT NOT NULL,
+            created_by INTEGER,
+            FOREIGN KEY(invoice_id) REFERENCES invoices(id)
+        )
+    """)
 
     order_columns = {row["name"] for row in cur.execute("PRAGMA table_info(orders)").fetchall()}
     if "balance_before" not in order_columns:
@@ -471,6 +482,19 @@ def record_invoice_partial_payment(invoice_id, amount, created_by=None):
         conn.close()
         return None
     invoice = dict(row)
+    other_order = cur.execute(
+        "SELECT id FROM orders WHERE user_id = ? AND status = 'pending' LIMIT 1",
+        (invoice["user_id"],)
+    ).fetchone()
+    other_invoice = cur.execute("""
+        SELECT id FROM invoices
+        WHERE user_id = ? AND status = 'pending' AND approval_required = 1 AND id != ?
+        LIMIT 1
+    """, (invoice["user_id"], invoice_id)).fetchone()
+    if other_order or other_invoice:
+        conn.rollback()
+        conn.close()
+        return None
     old_paid = int(invoice.get("paid_amount") or 0)
     remaining = max(0, int(invoice["total_amount"]) - old_paid)
     if amount > remaining:
@@ -479,6 +503,10 @@ def record_invoice_partial_payment(invoice_id, amount, created_by=None):
         raise ValueError("مبلغ واردشده از مانده فاکتور بیشتر است.")
     new_paid = old_paid + amount
     completed = new_paid >= int(invoice["total_amount"])
+    cur.execute("""
+        INSERT INTO invoice_payments (invoice_id, amount, receipt_file_id, created_at, created_by)
+        VALUES (?, ?, ?, ?, ?)
+    """, (invoice_id, amount, invoice.get("receipt_file_id"), now(), created_by))
     if completed:
         cur.execute("""
             UPDATE invoices
@@ -533,6 +561,21 @@ def create_order(
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("BEGIN IMMEDIATE")
+
+    # Prevent parallel payment snapshots from charging/settling the same balance.
+    open_order = cur.execute(
+        "SELECT id FROM orders WHERE user_id = ? AND status = 'pending' LIMIT 1",
+        (user_id,)
+    ).fetchone()
+    open_invoice = cur.execute("""
+        SELECT id FROM invoices
+        WHERE user_id = ? AND status = 'pending' AND approval_required = 1
+        LIMIT 1
+    """, (user_id,)).fetchone()
+    if open_order or open_invoice:
+        conn.rollback()
+        conn.close()
+        raise ValueError("برای این حساب یک پرداخت در انتظار وجود دارد؛ ابتدا همان پرداخت را تکمیل یا لغو کنید.")
 
     # Validate and consume a coupon in the same transaction as order creation.
     # This prevents races at the usage limit and avoids consuming a coupon if
@@ -656,6 +699,19 @@ def approve_order(order_id, created_by=None):
         conn.close()
         return False
     order = dict(row)
+    other_order = cur.execute(
+        "SELECT id FROM orders WHERE user_id = ? AND status = 'pending' AND id != ? LIMIT 1",
+        (order["user_id"], order_id)
+    ).fetchone()
+    other_invoice = cur.execute("""
+        SELECT id FROM invoices
+        WHERE user_id = ? AND status = 'pending' AND approval_required = 1
+        LIMIT 1
+    """, (order["user_id"],)).fetchone()
+    if other_order or other_invoice:
+        conn.rollback()
+        conn.close()
+        return False
     cur.execute("""
         UPDATE orders SET status = 'approved', approved_at = ?
         WHERE id = ? AND status = 'pending'
@@ -853,6 +909,33 @@ def update_subscription_status(subscription_id, status):
 
 
 
+def delete_pending_order(order_id, user_id=None):
+    """Atomically delete only an unapproved pending order."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
+    sql = "SELECT user_id, coupon FROM orders WHERE id = ? AND status = 'pending'"
+    params = [order_id]
+    if user_id is not None:
+        sql += " AND user_id = ?"
+        params.append(user_id)
+    order = cur.execute(sql, params).fetchone()
+    if not order:
+        conn.rollback()
+        conn.close()
+        return False
+    if order["coupon"]:
+        cur.execute(
+            "UPDATE coupons SET used_count = MAX(0, used_count - 1) WHERE code = ?",
+            (str(order["coupon"]).upper(),)
+        )
+    cur.execute("DELETE FROM orders WHERE id = ? AND status = 'pending'", (order_id,))
+    deleted = cur.rowcount == 1
+    conn.commit()
+    conn.close()
+    return deleted
+
+
 def delete_order(order_id):
     conn = get_connection()
     cur = conn.cursor()
@@ -863,6 +946,14 @@ def delete_order(order_id):
     ).fetchone()
 
     if not order:
+        conn.rollback()
+        conn.close()
+        return False
+
+    linked_subscription = cur.execute(
+        "SELECT 1 FROM subscriptions WHERE order_id = ? LIMIT 1", (order_id,)
+    ).fetchone()
+    if linked_subscription and order["status"] == "approved":
         conn.rollback()
         conn.close()
         return False
@@ -1497,7 +1588,9 @@ def reset_user_info(user_id):
         WHERE id = ?
     """, (user_id,))
 
-    # pending referral rewards for this user
+    # Remove the matching referral rows too, otherwise the UNIQUE key blocks
+    # those invited users from being counted again after an intentional reset.
+    cur.execute("DELETE FROM referral_success WHERE inviter_id = ?", (user_id,))
     cur.execute(
         "DELETE FROM referral_rewards WHERE user_id = ? AND status = 'pending'",
         (user_id,)
@@ -1554,6 +1647,21 @@ def create_invoice(user_id, title, base_amount, description="", service_id=None,
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("BEGIN IMMEDIATE")
+    if approval_required:
+        open_order = cur.execute(
+            "SELECT id FROM orders WHERE user_id = ? AND status = 'pending' LIMIT 1",
+            (user_id,)
+        ).fetchone()
+        open_invoice = cur.execute("""
+            SELECT id FROM invoices
+            WHERE user_id = ? AND status = 'pending' AND approval_required = 1
+            LIMIT 1
+        """, (user_id,)).fetchone()
+        if open_order or open_invoice:
+            conn.rollback()
+            conn.close()
+            raise ValueError("برای این حساب یک پرداخت در انتظار وجود دارد؛ ابتدا همان پرداخت را تکمیل یا لغو کنید.")
+
     row = cur.execute(
         "SELECT COALESCE(SUM(amount), 0) AS balance FROM customer_ledger WHERE user_id = ?",
         (user_id,)
@@ -1594,6 +1702,15 @@ def get_user_invoices(user_id, limit=20):
     return [dict(row) for row in rows]
 
 
+def get_invoice_payments(invoice_id):
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT * FROM invoice_payments WHERE invoice_id = ? ORDER BY id ASC
+    """, (invoice_id,)).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 def set_invoice_receipt(invoice_id, file_id):
     conn = get_connection()
     cur = conn.cursor()
@@ -1618,13 +1735,30 @@ def mark_invoice_paid(invoice_id, created_by=None, paid_amount=None):
         conn.close()
         return False
     invoice = dict(row)
+    other_order = cur.execute(
+        "SELECT id FROM orders WHERE user_id = ? AND status = 'pending' LIMIT 1",
+        (invoice["user_id"],)
+    ).fetchone()
+    other_invoice = cur.execute("""
+        SELECT id FROM invoices
+        WHERE user_id = ? AND status = 'pending' AND approval_required = 1 AND id != ?
+        LIMIT 1
+    """, (invoice["user_id"], invoice_id)).fetchone()
+    if other_order or other_invoice:
+        conn.rollback()
+        conn.close()
+        return False
     amount = invoice["total_amount"] if paid_amount is None else int(paid_amount)
     if amount < invoice["total_amount"] or amount < 0:
         conn.rollback()
         conn.close()
         return False
     cur.execute("""
-        UPDATE invoices SET status = 'paid', paid_at = ?, paid_amount = ?
+        INSERT INTO invoice_payments (invoice_id, amount, receipt_file_id, created_at, created_by)
+        VALUES (?, ?, ?, ?, ?)
+    """, (invoice_id, amount, invoice.get("receipt_file_id"), now(), created_by))
+    cur.execute("""
+        UPDATE invoices SET status = 'paid', paid_at = ?, paid_amount = ?, receipt_file_id = NULL
         WHERE id = ? AND status = 'pending'
     """, (now(), amount, invoice_id))
     if cur.rowcount != 1:

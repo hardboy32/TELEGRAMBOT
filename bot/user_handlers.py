@@ -590,8 +590,8 @@ def register(app, config):
                     order = get_order(order_id) if order_id else None
                     if (order and order.get("user_id") == user_id
                             and order.get("status") == "pending"):
-                        from bot.database import delete_order
-                        delete_order(order_id)
+                        from bot.database import delete_pending_order
+                        delete_pending_order(order_id, user_id=user_id)
                 user_states.pop(user_id, None)
 
             elif not (state and state.get("step") in (
@@ -877,17 +877,21 @@ def register(app, config):
                     discount
                 )
 
-                order_id = create_order(
-                    user_id=user_id,
-                    service_id=service["id"],
-                    service_name=service["name"],
-                    order_type=state.get("order_type", "buy"),
-                    username=state["username"],
-                    original_price=service["price"],
-                    discount_percent=discount,
-                    final_price=final_price,
-                    coupon=coupon
-                )
+                try:
+                    order_id = create_order(
+                        user_id=user_id,
+                        service_id=service["id"],
+                        service_name=service["name"],
+                        order_type=state.get("order_type", "buy"),
+                        username=state["username"],
+                        original_price=service["price"],
+                        discount_percent=discount,
+                        final_price=final_price,
+                        coupon=coupon
+                    )
+                except ValueError as e:
+                    await message.reply_text(f"⛔ {e}")
+                    return
 
                 user_states[user_id] = {
                     "step": "waiting_receipt",

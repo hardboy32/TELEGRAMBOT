@@ -48,6 +48,7 @@ from bot.database import (
     get_subscription,
     get_subscription_by_order,
     delete_order,
+    delete_pending_order,
     update_order_status,
     delete_subscription,
     update_subscription_fields,
@@ -2034,7 +2035,9 @@ def register(app, config):
             return
 
         # Intentionally do not send any message to the customer.
-        delete_order(order_id)
+        if not delete_pending_order(order_id):
+            await query.answer("⚠️ سفارش هم‌زمان تغییر کرده؛ فهرست را تازه‌سازی کنید.", show_alert=True)
+            return
 
         await query.message.edit_text(
             f"🗑 سفارش #{order_id} بدون ارسال پیام به مشتری حذف شد.",
@@ -2660,11 +2663,15 @@ def register(app, config):
         target_id = state["target_id"]
         description = state.get("description", "")
         approval_required = bool(state.get("approval_required", True))
-        invoice_id = create_invoice(
-            target_id, state["title"], state["amount"], description,
-            service_id=state.get("service_id"), created_by=query.from_user.id,
-            approval_required=approval_required
-        )
+        try:
+            invoice_id = create_invoice(
+                target_id, state["title"], state["amount"], description,
+                service_id=state.get("service_id"), created_by=query.from_user.id,
+                approval_required=approval_required
+            )
+        except ValueError as e:
+            await query.answer(str(e), show_alert=True)
+            return
         invoice = get_invoice(invoice_id)
         admin_states.pop(query.from_user.id, None)
 
@@ -3026,7 +3033,9 @@ def register(app, config):
         uid = order["user_id"] if order else 0
 
         if order:
-            delete_order(order_id)
+            if not delete_order(order_id):
+                await query.answer("این سفارش به اشتراک فعال متصل است و برای حفظ سوابق قابل حذف نیست.", show_alert=True)
+                return
 
         await query.answer("حذف شد.")
         # back to orders list
