@@ -686,6 +686,19 @@ def approve_order(order_id, created_by=None):
         conn.close()
         return False
     order = dict(row)
+    other_order = cur.execute(
+        "SELECT id FROM orders WHERE user_id = ? AND status = 'pending' AND id != ? LIMIT 1",
+        (order["user_id"], order_id)
+    ).fetchone()
+    other_invoice = cur.execute("""
+        SELECT id FROM invoices
+        WHERE user_id = ? AND status = 'pending' AND approval_required = 1
+        LIMIT 1
+    """, (order["user_id"],)).fetchone()
+    if other_order or other_invoice:
+        conn.rollback()
+        conn.close()
+        return False
     cur.execute("""
         UPDATE orders SET status = 'approved', approved_at = ?
         WHERE id = ? AND status = 'pending'
@@ -1676,6 +1689,15 @@ def get_user_invoices(user_id, limit=20):
     return [dict(row) for row in rows]
 
 
+def get_invoice_payments(invoice_id):
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT * FROM invoice_payments WHERE invoice_id = ? ORDER BY id ASC
+    """, (invoice_id,)).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 def set_invoice_receipt(invoice_id, file_id):
     conn = get_connection()
     cur = conn.cursor()
@@ -1700,6 +1722,19 @@ def mark_invoice_paid(invoice_id, created_by=None, paid_amount=None):
         conn.close()
         return False
     invoice = dict(row)
+    other_order = cur.execute(
+        "SELECT id FROM orders WHERE user_id = ? AND status = 'pending' LIMIT 1",
+        (invoice["user_id"],)
+    ).fetchone()
+    other_invoice = cur.execute("""
+        SELECT id FROM invoices
+        WHERE user_id = ? AND status = 'pending' AND approval_required = 1 AND id != ?
+        LIMIT 1
+    """, (invoice["user_id"], invoice_id)).fetchone()
+    if other_order or other_invoice:
+        conn.rollback()
+        conn.close()
+        return False
     amount = invoice["total_amount"] if paid_amount is None else int(paid_amount)
     if amount < invoice["total_amount"] or amount < 0:
         conn.rollback()
