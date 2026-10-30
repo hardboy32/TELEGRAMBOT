@@ -1855,7 +1855,7 @@ def register(app, config):
     # =========================================================
 
     @app.on_callback_query(
-        filters.regex(r"^admin_delete_silent_\\d+$")
+        filters.regex(r"^admin_delete_silent_\d+$")
     )
     async def admin_delete_silent(client, query):
 
