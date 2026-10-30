@@ -1,6 +1,5 @@
 import sqlite3
 import os
-import asyncio
 from datetime import datetime
 
 
@@ -247,14 +246,24 @@ def add_or_update_user(
     ).fetchone()
 
     if existing:
+        # A user may first open the bot without a referral link and later
+        # arrive through one. Preserve an existing attribution, but fill a
+        # previously empty referral only once.
         cur.execute("""
             UPDATE users
             SET username = ?,
-                first_name = ?
+                first_name = ?,
+                referral_by = CASE
+                    WHEN referral_by IS NULL AND ? IS NOT NULL
+                    THEN ?
+                    ELSE referral_by
+                END
             WHERE id = ?
         """, (
             username,
             first_name,
+            referral_by,
+            referral_by,
             user_id
         ))
     else:
