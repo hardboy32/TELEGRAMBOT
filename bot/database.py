@@ -519,6 +519,35 @@ def create_order(
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("BEGIN IMMEDIATE")
+
+    # Validate and consume a coupon in the same transaction as order creation.
+    # This prevents races at the usage limit and avoids consuming a coupon if
+    # the order itself cannot be inserted.
+    if coupon:
+        coupon_row = cur.execute("""
+            SELECT id, percent FROM coupons
+            WHERE code = ? AND active = 1
+              AND (expires_at IS NULL OR expires_at = '' OR expires_at >= ?)
+              AND (max_uses = 0 OR used_count < max_uses)
+        """, (str(coupon).upper(), now())).fetchone()
+        if not coupon_row:
+            conn.rollback()
+            conn.close()
+            raise ValueError("کد تخفیف دیگر معتبر نیست یا ظرفیت استفاده از آن تمام شده است.")
+        if int(discount_percent) != int(coupon_row["percent"]):
+            conn.rollback()
+            conn.close()
+            raise ValueError("میزان تخفیف سفارش با کد تخفیف مطابقت ندارد.")
+        cur.execute("""
+            UPDATE coupons SET used_count = used_count + 1
+            WHERE id = ? AND active = 1
+              AND (max_uses = 0 OR used_count < max_uses)
+        """, (coupon_row["id"],))
+        if cur.rowcount != 1:
+            conn.rollback()
+            conn.close()
+            raise ValueError("ظرفیت استفاده از کد تخفیف تمام شده است.")
+
     row = cur.execute(
         "SELECT COALESCE(SUM(amount), 0) AS balance FROM customer_ledger WHERE user_id = ?",
         (user_id,)
@@ -589,17 +618,17 @@ def get_orders_count():
 def set_receipt(order_id, file_id):
     conn = get_connection()
 
-    conn.execute("""
+    cur = conn.cursor()
+    cur.execute("""
         UPDATE orders
         SET receipt_file_id = ?
         WHERE id = ?
-    """, (
-        file_id,
-        order_id
-    ))
-
+          AND status = 'pending'
+    """, (file_id, order_id))
+    changed = cur.rowcount
     conn.commit()
     conn.close()
+    return bool(changed)
 
 
 def approve_order(order_id, created_by=None):
@@ -607,7 +636,8 @@ def approve_order(order_id, created_by=None):
     cur = conn.cursor()
     cur.execute("BEGIN IMMEDIATE")
     row = cur.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
-    if not row or row["status"] != "pending":
+    if (not row or row["status"] != "pending"
+            or not str(row["receipt_file_id"] or "").strip()):
         conn.rollback()
         conn.close()
         return False
@@ -680,8 +710,20 @@ def save_subscription(
     config_text=None
 ):
     conn = get_connection()
-
     cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
+
+    # A single order can activate only one subscription. This also makes
+    # repeated admin clicks / retries idempotent.
+    if order_id is not None:
+        existing = cur.execute(
+            "SELECT id FROM subscriptions WHERE order_id = ? ORDER BY id ASC LIMIT 1",
+            (order_id,)
+        ).fetchone()
+        if existing:
+            conn.commit()
+            conn.close()
+            return int(existing["id"])
 
     cur.execute("""
         INSERT INTO subscriptions (
