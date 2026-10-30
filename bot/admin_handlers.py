@@ -1202,8 +1202,8 @@ def register(app, config):
                     order["user_id"],
                     "🎉 سفارش شما تأیید شد!\n\n"
                     f"🧾 سفارش: #{order_id}\n"
-                    f"📦 سرویس: {order['service_name']}\n"
-                    f"👤 نام کاربری: <code>{order['username']}</code>\n\n"
+                    f"📦 سرویس: {html.escape(str(order['service_name']))}\n"
+                    f"👤 نام کاربری: <code>{html.escape(str(order['username']))}</code>\n\n"
                     "⚙️ کانفیگ شما:\n\n"
                     f"<code>{html.escape(config_text)}</code>\n\n"
                     "✅ اشتراک شما فعال شد.",
@@ -1469,9 +1469,9 @@ def register(app, config):
                 await client.send_message(
                     target_id,
                     "🎉 یک اشتراک برای شما ثبت شد.\n\n"
-                    f"📦 سرویس: {service_name}\n"
-                    f"👤 نام کاربری: <code>{username}</code>\n\n"
-                    f"⚙️ کانفیگ:\n<code>{config_text}</code>",
+                    f"📦 سرویس: {html.escape(str(service_name))}\n"
+                    f"👤 نام کاربری: <code>{html.escape(str(username))}</code>\n\n"
+                    f"⚙️ کانفیگ:\n<code>{html.escape(str(config_text))}</code>",
                     parse_mode=enums.ParseMode.HTML
                 )
             except Exception as e:
@@ -2788,8 +2788,8 @@ def register(app, config):
         text = (
             "👤 جزئیات کاربر\n\n"
             f"🆔 شناسه: <code>{target_id}</code>\n"
-            f"📛 نام: {name}\n"
-            f"🔗 یوزرنیم تلگرام: {uname}\n"
+            f"📛 نام: {html.escape(str(name))}\n"
+            f"🔗 یوزرنیم تلگرام: {html.escape(str(uname))}\n"
             f"📅 عضویت: {user.get('joined_at') or '—'}\n"
             f"👥 دعوت موفق: {ref_count}\n"
             f"🧾 تعداد سفارش: {len(orders)}\n"
@@ -2832,8 +2832,8 @@ def register(app, config):
 
         for o in orders[:25]:
             lines.append(
-                f"#{o['id']} | {o['service_name']} | "
-                f"<code>{o['username']}</code> | "
+                f"#{o['id']} | {html.escape(str(o['service_name']))} | "
+                f"<code>{html.escape(str(o['username']))}</code> | "
                 f"{format_price(o['final_price'])} | {o['status']}"
             )
             rows.append(
