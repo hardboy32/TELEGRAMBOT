@@ -144,10 +144,12 @@ async def check_low_volume_once(client, config):
 
     subscriptions = get_active_subscriptions()
     low_users = {}
+    failed_users = set()
 
     for subscription in subscriptions:
         result = await get_subscription_info(subscription.get("subscription_url"))
         if not result.get("success"):
+            failed_users.add(subscription["user_id"])
             continue
 
         remaining = result.get("remaining")
@@ -162,23 +164,24 @@ async def check_low_volume_once(client, config):
     for user_id in user_ids:
         low_items = low_users.get(user_id, [])
         if not low_items:
-            reset_low_volume_warning(user_id)
+            if user_id not in failed_users:
+                reset_low_volume_warning(user_id)
             continue
 
         if (not config.get("low_volume_notification_enabled", False)
                 or get_low_volume_warned(user_id)):
             continue
 
-        details = "\\n".join(
+        details = "\n".join(
             f"• {item['service_name']} ({item['username']}): {item['remaining']}"
             for item in low_items
         )
         try:
             await client.send_message(
                 user_id,
-                "⚠️ هشدار کاهش حجم اشتراک\\n\\n"
+                "⚠️ هشدار کاهش حجم اشتراک\n\n"
                 + details
-                + "\\n\\nحجم باقی‌مانده یکی از اشتراک‌های شما کمتر از ۱ گیگابایت است."
+                + "\n\nحجم باقی‌مانده یکی از اشتراک‌های شما کمتر از ۱ گیگابایت است."
             )
             set_low_volume_warned(user_id)
         except Exception as e:
@@ -221,25 +224,3 @@ async def stop_hermes_monitor():
             pass
     _monitor_task = None
 
-    if not remaining:
-        return False
-
-    text = remaining.lower().replace(",", "")
-
-    try:
-        if "gb" in text:
-            number = float(
-                text.replace("gb", "").strip()
-            )
-            return number < 1
-
-        if "mb" in text:
-            number = float(
-                text.replace("mb", "").strip()
-            )
-            return number < 1024
-
-    except ValueError:
-        pass
-
-    return False
