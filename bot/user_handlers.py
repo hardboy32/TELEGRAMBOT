@@ -719,8 +719,8 @@ def register(app, config):
                 return
 
             text_out = (
-                f"📦 {sub['service_name']}\n"
-                f"👤 {sub['username']}\n"
+                f"📦 {html.escape(str(sub['service_name']))}\n"
+                f"👤 {html.escape(str(sub['username']))}\n"
                 f"🔵 وضعیت: {sub['status']}\n"
             )
 
@@ -728,7 +728,7 @@ def register(app, config):
                 text_out += f"\n🔗 لینک:\n{sub['subscription_url']}\n"
 
             if sub.get("config_text"):
-                text_out += f"\n📄 کانفیگ:\n<code>{sub['config_text']}</code>"
+                text_out += f"\n📄 کانفیگ:\n<code>{html.escape(str(sub['config_text']))}</code>"
 
             await message.reply_text(
                 text_out,
