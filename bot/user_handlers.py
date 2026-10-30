@@ -62,7 +62,9 @@ from bot.messages import (
 )
 
 
-user_states = {}
+from bot.state_store import PersistentStateMap
+
+user_states = PersistentStateMap("user", ttl_seconds=7 * 24 * 60 * 60)
 
 
 def _menu(config, user_id):
