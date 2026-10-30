@@ -898,7 +898,7 @@ def register(app, config):
             except ValueError:
                 await message.reply_text("مبلغ را به عدد صحیح و غیرصفر وارد کنید.")
                 raise StopPropagation
-            state["amount"] = amount
+            state["amount"] = amount * int(state.get("sign", 1))
             state["step"] = "ledger_description"
             await message.reply_text("شرح این تغییر حساب را وارد کنید:")
             raise StopPropagation
@@ -2443,6 +2443,80 @@ def register(app, config):
 
         await query.answer()
 
+
+
+    @app.on_callback_query(filters.regex(r"^admin_ledger_\\d+$"))
+    async def admin_customer_ledger(client, query):
+        if not admin(query.from_user.id, config):
+            return
+        target_id = int(query.data.split("_")[-1])
+        balance = get_customer_balance(target_id)
+        entries = get_customer_ledger(target_id, 10)
+        label = "بدهکار" if balance > 0 else ("بستانکار" if balance < 0 else "تسویه")
+        body = f"💰 حساب مشتری <code>{target_id}</code>\\nمانده: {format_price(abs(balance))} تومان ({label})\\n\\n"
+        for item in entries:
+            sign = "+" if item["amount"] > 0 else "−"
+            body += f"{sign}{format_price(abs(item['amount']))} | {item['description']} | {item['created_at']}\\n"
+        await query.message.edit_text(body, reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ ثبت بدهی", callback_data=f"admin_ledger_add_{target_id}_debt"),
+             InlineKeyboardButton("➖ ثبت طلب/اعتبار", callback_data=f"admin_ledger_add_{target_id}_credit")],
+            [InlineKeyboardButton("⬅️ بازگشت", callback_data=f"admin_user_{target_id}")]
+        ]), parse_mode=enums.ParseMode.HTML)
+        await query.answer()
+
+    @app.on_callback_query(filters.regex(r"^admin_ledger_add_\\d+_(debt|credit)$"))
+    async def admin_customer_ledger_add(client, query):
+        if not admin(query.from_user.id, config):
+            return
+        parts = query.data.split("_")
+        target_id, kind = int(parts[3]), parts[4]
+        admin_states[query.from_user.id] = {
+            "step": "ledger_amount", "target_id": target_id,
+            "sign": -1 if kind == "credit" else 1
+        }
+        await query.message.reply_text("مبلغ را به تومان وارد کنید:")
+        await query.answer()
+
+    @app.on_callback_query(filters.regex(r"^admin_invoice_\\d+$"))
+    async def admin_invoice_start(client, query):
+        if not admin(query.from_user.id, config):
+            return
+        target_id = int(query.data.split("_")[-1])
+        services = get_services(True)
+        rows = [[InlineKeyboardButton(
+            f"{s['name']} | {format_price(s['price'])} تومان",
+            callback_data=f"admin_invoice_svc_{target_id}_{s['id']}"
+        )] for s in services]
+        rows.append([InlineKeyboardButton("✍️ مبلغ دلخواه", callback_data=f"admin_invoice_custom_{target_id}")])
+        await query.message.reply_text("سرویس را انتخاب کنید یا فاکتور با مبلغ دلخواه بسازید:", reply_markup=InlineKeyboardMarkup(rows))
+        await query.answer()
+
+    @app.on_callback_query(filters.regex(r"^admin_invoice_svc_\\d+_\\d+$"))
+    async def admin_invoice_service(client, query):
+        if not admin(query.from_user.id, config):
+            return
+        parts = query.data.split("_")
+        target_id, service_id = int(parts[3]), int(parts[4])
+        service = get_service(service_id)
+        if not service or not service.get("active"):
+            await query.answer("سرویس در دسترس نیست.", show_alert=True)
+            return
+        admin_states[query.from_user.id] = {
+            "step": "invoice_description", "target_id": target_id,
+            "title": service["name"], "amount": int(service["price"]),
+            "service_id": service_id
+        }
+        await query.message.reply_text(f"سرویس {service['name']} انتخاب شد. توضیحات را وارد کنید یا - بفرستید:")
+        await query.answer()
+
+    @app.on_callback_query(filters.regex(r"^admin_invoice_custom_\\d+$"))
+    async def admin_invoice_custom(client, query):
+        if not admin(query.from_user.id, config):
+            return
+        target_id = int(query.data.split("_")[-1])
+        admin_states[query.from_user.id] = {"step": "invoice_title", "target_id": target_id}
+        await query.message.reply_text("عنوان فاکتور را وارد کنید:")
+        await query.answer()
 
     @app.on_callback_query(
         filters.regex(r"^admin_user_\d+$")
