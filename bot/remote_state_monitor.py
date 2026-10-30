@@ -13,6 +13,29 @@ CHECK_INTERVAL = 300
 MIN_REMOTE_ADVANTAGE_SECONDS = 30
 
 _monitor_task = None
+_runtime_config = None
+
+
+def _reload_runtime_config():
+    if not isinstance(_runtime_config, dict):
+        return
+
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            restored = __import__("json").load(f)
+        if isinstance(restored, dict):
+            for key, value in restored.items():
+                if key not in ("api_id", "api_hash", "bot_token", "payment_card", "payment_name"):
+                    _runtime_config[key] = value
+
+        # Private payment settings live in SQLite and are restored with DB.
+        from bot.database import get_setting
+        for key in ("payment_card", "payment_name"):
+            value = get_setting(key)
+            if value:
+                _runtime_config[key] = value
+    except Exception as e:
+        print(f"Remote State Monitor: runtime config reload failed: {e}")
 
 
 def mark_remote_state_ready():
@@ -83,6 +106,7 @@ async def _check_remote_state():
             )
             restored = await remote_storage.restore_from_remote()
             if restored:
+                _reload_runtime_config()
                 mark_remote_state_ready()
             return
 
@@ -121,6 +145,7 @@ async def _check_remote_state():
             )
             restored = await remote_storage.restore_from_remote()
             if restored:
+                _reload_runtime_config()
                 mark_remote_state_ready()
 
     except Exception as e:
@@ -151,8 +176,12 @@ async def _monitor_loop():
         _monitor_task = None
 
 
-def start_remote_state_monitor():
+def start_remote_state_monitor(config=None):
     global _monitor_task
+    global _runtime_config
+
+    if config is not None:
+        _runtime_config = config
 
     if not remote_storage._storage_started:
         return
