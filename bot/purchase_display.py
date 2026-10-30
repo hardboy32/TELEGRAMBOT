@@ -15,8 +15,8 @@ def _purchase_keyboard(services):
     for service in services:
         price = format_price(service["price"])
         label = (
-            f"📦 {service['volume_gb']}GB | "
-            f"💰 {price} تومان"
+            f"📦 {service['name']} | "
+            f"{service['volume_gb']}GB | 💰 {price} تومان"
         )
 
         rows.append(
@@ -60,6 +60,10 @@ def register(app, config):
 
         user_id = message.from_user.id
 
+        if not config.get("buy_enabled", True):
+            await message.reply_text("⛔ گزینه خرید سرویس فعلاً غیرفعال است.")
+            raise StopPropagation
+
         services = get_services(True)
 
         if not services:
@@ -70,8 +74,8 @@ def register(app, config):
         for service in services:
             price = format_price(service["price"])
             label = (
-                f"📦 {service['volume_gb']}GB | "
-                f"💰 {price} تومان"
+                f"📦 {service['name']} | "
+                f"{service['volume_gb']}GB | 💰 {price} تومان"
             )
             services_map[label] = service["id"]
 
