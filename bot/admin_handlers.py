@@ -860,6 +860,7 @@ def register(app, config):
                 "در حال ساخت بکاپ..."
             )
 
+            zip_path = None
             try:
                 zip_path = create_backup(config)
 
@@ -883,6 +884,15 @@ def register(app, config):
                     f"❌ خطا در ساخت بکاپ:\n{e}",
                     reply_markup=admin_reply_menu()
                 )
+
+            finally:
+                # The archive has already been delivered to the admin; keep
+                # Inforflow storage free of redundant local ZIP copies.
+                if zip_path and os.path.isfile(zip_path):
+                    try:
+                        os.remove(zip_path)
+                    except OSError as cleanup_error:
+                        print(f"Manual backup cleanup error: {cleanup_error}")
 
             raise StopPropagation
 
