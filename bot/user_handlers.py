@@ -533,10 +533,25 @@ def register(app, config):
 
             return
 
-        # بازگشت / منوی اصلی / لغو
+        # Cancel an unsubmitted order explicitly; navigating home must not
+        # discard the in-memory link to a receipt the customer still intends to send.
         if text in ("⬅️ بازگشت", "🏠 منوی اصلی", "❌ لغو سفارش"):
 
-            user_states.pop(user_id, None)
+            if text == "❌ لغو سفارش":
+                if state and state.get("step") == "waiting_receipt":
+                    order_id = state.get("order_id")
+                    order = get_order(order_id) if order_id else None
+                    if (order and order.get("user_id") == user_id
+                            and order.get("status") == "pending"):
+                        from bot.database import delete_order
+                        delete_order(order_id)
+                user_states.pop(user_id, None)
+
+            elif not (state and state.get("step") in (
+                    "waiting_receipt",
+                    "waiting_invoice_receipt"
+            )):
+                user_states.pop(user_id, None)
 
             await message.reply_text(
                 "🏠 منوی اصلی",
