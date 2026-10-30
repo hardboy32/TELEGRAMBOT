@@ -684,17 +684,13 @@ def delete_order(order_id):
 
 
 def update_order_status(order_id, status):
-    conn = get_connection()
     if status == "approved":
-        conn.execute(
-            "UPDATE orders SET status = ?, approved_at = ? WHERE id = ?",
-            (status, now(), order_id)
-        )
-    else:
-        conn.execute(
-            "UPDATE orders SET status = ? WHERE id = ?",
-            (status, order_id)
-        )
+        return approve_order(order_id)
+    conn = get_connection()
+    conn.execute(
+        "UPDATE orders SET status = ? WHERE id = ?",
+        (status, order_id)
+    )
     conn.commit()
     conn.close()
     return True
