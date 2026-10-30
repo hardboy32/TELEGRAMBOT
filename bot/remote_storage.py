@@ -58,13 +58,9 @@ _TEMP_DIRS = (
     "data/.remote_state_restore",
 )
 
-# Each committed database change schedules a fresh Telegram snapshot.
-# A short debounce merges only writes that happen in the same burst.
-MIN_SYNC_INTERVAL = 60
-_last_sync_at = 0.0
-
+# Database commits schedule snapshots directly through database.py.
+# A short debounce merges writes that happen in the same burst.
 _dirty = False
-_last_db_mtime = None
 _last_config_mtime = None
 _watcher_task = None
 
@@ -748,7 +744,6 @@ async def sync_all(force=False):
     global _dirty
     global _db_state_message_id
     global _config_state_message_id
-    global _last_sync_at
 
     if not _storage_started:
         return False
@@ -758,7 +753,6 @@ async def sync_all(force=False):
             return True
 
         _dirty = False
-        _last_sync_at = time.monotonic()
 
         print("Remote Storage: sync started.")
 
@@ -847,17 +841,9 @@ async def _sync_worker():
             _storage_started
             and _dirty
         ):
-            # Batch frequent database writes; do not create a full archive
-            # more than once per minute during normal background syncing.
-            remaining = MIN_SYNC_INTERVAL - (time.monotonic() - _last_sync_at)
-            if remaining > 0:
-                await asyncio.sleep(remaining)
-                if not _storage_started or not _dirty:
-                    break
-
-            await sync_all(
-                force=False
-            )
+            # Database commits already mark the state dirty. The short
+            # debounce batches bursts without an arbitrary time-based delay.
+            await sync_all(force=False)
 
             if _dirty:
                 await asyncio.sleep(2)
@@ -875,30 +861,15 @@ async def _sync_worker():
 
 
 async def _watch_files():
-    global _last_db_mtime
+    """Watch config.json only; SQLite commits notify the backup scheduler."""
     global _last_config_mtime
 
-    _last_db_mtime = _mtime(
-        DB_PATH
-    )
-    _last_config_mtime = _mtime(
-        CONFIG_PATH
-    )
+    _last_config_mtime = _mtime(CONFIG_PATH)
 
     while _storage_started:
         try:
             await asyncio.sleep(1)
-
-            db_mtime = _mtime(
-                DB_PATH
-            )
-            config_mtime = _mtime(
-                CONFIG_PATH
-            )
-
-            if db_mtime != _last_db_mtime:
-                _last_db_mtime = db_mtime
-                schedule_sync()
+            config_mtime = _mtime(CONFIG_PATH)
 
             if config_mtime != _last_config_mtime:
                 _last_config_mtime = config_mtime
@@ -908,9 +879,7 @@ async def _watch_files():
             raise
 
         except Exception as e:
-            print(
-                f"Remote watcher error: {e}"
-            )
+            print(f"Remote config watcher error: {e}")
             await asyncio.sleep(5)
 
 
