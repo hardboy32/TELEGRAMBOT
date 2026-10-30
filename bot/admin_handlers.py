@@ -65,7 +65,8 @@ from bot.database import (
     get_invoice,
     get_user_invoices,
     mark_invoice_paid,
-    record_invoice_partial_payment
+    record_invoice_partial_payment,
+    set_setting
 )
 
 
@@ -1491,6 +1492,10 @@ def register(app, config):
 
             config["payment_name"] = text
 
+            # Payment details are private operational settings, not public
+            # config.json values. Persist them in the backed-up SQLite DB.
+            set_setting("payment_card", config.get("payment_card", ""))
+            set_setting("payment_name", config["payment_name"])
             save_config(config)
 
             admin_states.pop(
