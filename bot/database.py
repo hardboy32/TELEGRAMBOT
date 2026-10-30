@@ -170,6 +170,13 @@ def init_db():
         )
     """)
 
+    # Backward-compatible invoice migrations.
+    invoice_columns = {row["name"] for row in cur.execute("PRAGMA table_info(invoices)").fetchall()}
+    if "approval_required" not in invoice_columns:
+        cur.execute("ALTER TABLE invoices ADD COLUMN approval_required INTEGER NOT NULL DEFAULT 1")
+    if "paid_amount" not in invoice_columns:
+        cur.execute("ALTER TABLE invoices ADD COLUMN paid_amount INTEGER NOT NULL DEFAULT 0")
+
     # seed default platforms if empty
     existing = cur.execute(
         "SELECT COUNT(*) AS c FROM tutorials"
@@ -1298,7 +1305,8 @@ def get_customer_ledger(user_id, limit=30):
     return [dict(row) for row in rows]
 
 
-def create_invoice(user_id, title, base_amount, description="", service_id=None, created_by=None):
+def create_invoice(user_id, title, base_amount, description="", service_id=None,
+                   created_by=None, approval_required=True):
     base_amount = int(base_amount)
     if base_amount < 0:
         raise ValueError("مبلغ فاکتور نمی‌تواند منفی باشد.")
@@ -1314,9 +1322,10 @@ def create_invoice(user_id, title, base_amount, description="", service_id=None,
     cur.execute("""
         INSERT INTO invoices
         (user_id, service_id, title, description, base_amount, balance_before,
-         total_amount, status, created_at, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-    """, (user_id, service_id, title, description, base_amount, balance, total, now(), created_by))
+         total_amount, status, created_at, created_by, approval_required, paid_amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, 0)
+    """, (user_id, service_id, title, description, base_amount, balance,
+          total, now(), created_by, 1 if approval_required else 0))
     invoice_id = cur.lastrowid
     conn.commit()
     conn.close()
@@ -1353,7 +1362,8 @@ def set_invoice_receipt(invoice_id, file_id):
     return bool(changed)
 
 
-def mark_invoice_paid(invoice_id, created_by=None):
+def mark_invoice_paid(invoice_id, created_by=None, paid_amount=None):
+    """Settle an invoice once, and apply the captured prior balance exactly once."""
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("BEGIN IMMEDIATE")
@@ -1363,21 +1373,27 @@ def mark_invoice_paid(invoice_id, created_by=None):
         conn.close()
         return False
     invoice = dict(row)
+    amount = invoice["total_amount"] if paid_amount is None else int(paid_amount)
+    if amount < invoice["total_amount"] or amount < 0:
+        conn.rollback()
+        conn.close()
+        return False
     cur.execute("""
-        UPDATE invoices SET status = 'paid', paid_at = ?
+        UPDATE invoices SET status = 'paid', paid_at = ?, paid_amount = ?
         WHERE id = ? AND status = 'pending'
-    """, (now(), invoice_id))
+    """, (now(), amount, invoice_id))
     if cur.rowcount != 1:
         conn.rollback()
         conn.close()
         return False
-    # Settle the pre-existing debt/credit exactly once. Any new debt from an
-    # unpaid invoice is recorded separately when an admin marks it unpaid/owed.
-    if invoice["balance_before"]:
+    old_balance = int(invoice["balance_before"] or 0)
+    # Positive = debt, negative = credit. Never consume more credit than base price.
+    settlement = -old_balance if old_balance > 0 else min(-old_balance, int(invoice["base_amount"]))
+    if settlement:
         cur.execute("""
             INSERT INTO customer_ledger (user_id, amount, description, created_at, created_by)
             VALUES (?, ?, ?, ?, ?)
-        """, (invoice["user_id"], -int(invoice["balance_before"]),
+        """, (invoice["user_id"], settlement,
               "تسویه مانده حساب در فاکتور #" + str(invoice_id), now(), created_by))
     conn.commit()
     conn.close()
