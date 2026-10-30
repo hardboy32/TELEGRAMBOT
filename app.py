@@ -4,7 +4,8 @@ import os
 
 from pyrogram import Client
 
-from bot.database import init_db
+from bot.database import init_db, get_setting, set_setting
+from bot.helpers import save_config
 from bot.user_handlers import register as register_users
 from bot.admin_handlers import register as register_admin
 from bot.store_control import register as register_store_control
@@ -172,6 +173,31 @@ async def main():
         )
 
         init_db()
+
+        # Migrate legacy payment details out of config.json into the private
+        # SQLite settings table. Environment variables take precedence.
+        for key, env_name in (
+            ("payment_card", "PAYMENT_CARD"),
+            ("payment_name", "PAYMENT_NAME"),
+        ):
+            env_value = os.getenv(env_name)
+            stored_value = get_setting(key)
+            legacy_value = config.get(key)
+
+            if env_value:
+                value = env_value.strip()
+            elif stored_value:
+                value = stored_value
+            else:
+                value = legacy_value or ""
+
+            config[key] = value
+            if value:
+                set_setting(key, value)
+
+        # save_config filters private values, ensuring the local config file
+        # is scrubbed after any legacy restore/migration.
+        save_config(config)
 
         print(
             "Registering bot handlers..."
