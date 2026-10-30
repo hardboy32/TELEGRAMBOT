@@ -1163,10 +1163,6 @@ def register(app, config):
                 config_text=config_text
             )
 
-            if not approve_order(order_id, created_by=query.from_user.id):
-            await query.answer("این سفارش قبلاً بررسی شده است.", show_alert=True)
-            return
-
             admin_states.pop(
                 user_id,
                 None
