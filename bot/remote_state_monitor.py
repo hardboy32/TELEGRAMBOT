@@ -34,15 +34,15 @@ def _file_mtime(path):
 
 
 def _remote_updated_at(message):
-    caption = ""
-
-    try:
-        caption = message.caption or message.text or ""
-    except Exception:
-        return None
+    # remote_storage._get_state_message returns the raw Bot API dictionary,
+    # not a Pyrogram Message object.
+    if isinstance(message, dict):
+        caption = message.get("caption") or message.get("text") or ""
+    else:
+        caption = getattr(message, "caption", None) or getattr(message, "text", None) or ""
 
     match = re.search(
-        r"Updated:\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})",
+        r"(?:Backup time|Updated):\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})",
         caption
     )
 
