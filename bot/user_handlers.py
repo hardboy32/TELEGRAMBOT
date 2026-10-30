@@ -273,6 +273,12 @@ def register(app, config):
 
         if text == "🔄 تمدید":
 
+            if state and state.get("step") in ("waiting_receipt", "waiting_invoice_receipt"):
+                await message.reply_text(
+                    "⏳ ابتدا پرداخت ناتمام فعلی را تکمیل یا لغو کنید."
+                )
+                return
+
             if not config.get("renew_enabled", True):
                 await message.reply_text("⛔ گزینه تمدید فعلاً غیرفعال است.", reply_markup=_menu(config, user_id))
                 return
@@ -1299,6 +1305,14 @@ def register(app, config):
 
     @app.on_callback_query(filters.regex("^invoice_pay_[0-9]+$"))
     async def invoice_pay(client, query):
+        current_state = user_states.get(query.from_user.id) or {}
+        if current_state.get("step") in ("waiting_receipt", "waiting_invoice_receipt"):
+            await query.answer(
+                "ابتدا پرداخت ناتمام فعلی را تکمیل یا لغو کنید.",
+                show_alert=True
+            )
+            return
+
         invoice_id = int(query.data.split("_")[-1])
         invoice = get_invoice(invoice_id)
         if not invoice or invoice["user_id"] != query.from_user.id:
@@ -1371,6 +1385,11 @@ def register(app, config):
         filters.regex(r"^renew_\d+$")
     )
     async def renew_selected(client, query):
+
+        current_state = user_states.get(query.from_user.id) or {}
+        if current_state.get("step") in ("waiting_receipt", "waiting_invoice_receipt"):
+            await query.answer("ابتدا پرداخت ناتمام فعلی را تکمیل یا لغو کنید.", show_alert=True)
+            return
 
         sub_id = int(
             query.data.split("_")[1]
