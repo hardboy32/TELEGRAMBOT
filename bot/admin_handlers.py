@@ -937,32 +937,15 @@ def register(app, config):
             raise StopPropagation
 
         if state and state.get("step") == "invoice_description":
-            description = "" if text == "-" else text
-            target_id = state["target_id"]
-            invoice_id = create_invoice(
-                target_id, state["title"], state["amount"], description,
-                created_by=user_id
+            state["description"] = "" if text == "-" else text
+            state["step"] = "invoice_approval_mode"
+            await message.reply_text(
+                "نوع فاکتور را انتخاب کنید:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🛡 نیازمند تأیید ادمین", callback_data="admin_invoice_mode_1")],
+                    [InlineKeyboardButton("⚡ بدون نیاز به تأیید", callback_data="admin_invoice_mode_0")]
+                ])
             )
-            invoice = get_invoice(invoice_id)
-            admin_states.pop(user_id, None)
-            try:
-                await client.send_message(
-                    target_id,
-                    "🧾 فاکتور جدید\n\n"
-                    f"شماره فاکتور: #{invoice_id}\n"
-                    f"شرح: {invoice['title']}\n"
-                    + (f"توضیحات: {description}\n" if description else "")
-                    + f"مبلغ پایه: {format_price(invoice['base_amount'])} تومان\n"
-                    + f"مانده قبلی: {format_price(invoice['balance_before'])} تومان\n"
-                    + f"مبلغ قابل پرداخت: {format_price(invoice['total_amount'])} تومان\n\n"
-                    "برای ارسال رسید، دکمه زیر را بزنید.",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("💳 پرداخت فاکتور", callback_data=f"invoice_pay_{invoice_id}")
-                    ]])
-                )
-                await message.reply_text(f"✅ فاکتور #{invoice_id} برای کاربر ارسال شد.")
-            except Exception as e:
-                await message.reply_text(f"فاکتور #{invoice_id} ساخته شد اما ارسال نشد: {e}")
             raise StopPropagation
 
         # =====================================================
@@ -2518,6 +2501,50 @@ def register(app, config):
         admin_states[query.from_user.id] = {"step": "invoice_title", "target_id": target_id}
         await query.message.reply_text("عنوان فاکتور را وارد کنید:")
         await query.answer()
+
+    @app.on_callback_query(filters.regex(r"^admin_invoice_mode_[01]$"))
+    async def admin_invoice_mode(client, query):
+        if not admin(query.from_user.id, config):
+            await query.answer("دسترسی ندارید.", show_alert=True)
+            return
+        state = admin_states.get(query.from_user.id)
+        if not state or state.get("step") != "invoice_approval_mode":
+            await query.answer("فرآیند ساخت فاکتور منقضی شده است.", show_alert=True)
+            return
+        approval_required = query.data.endswith("_1")
+        target_id = state["target_id"]
+        description = state.get("description", "")
+        invoice_id = create_invoice(
+            target_id, state["title"], state["amount"], description,
+            service_id=state.get("service_id"), created_by=query.from_user.id,
+            approval_required=approval_required
+        )
+        invoice = get_invoice(invoice_id)
+        admin_states.pop(query.from_user.id, None)
+        try:
+            approval_text = "نیازمند تأیید مدیریت" if approval_required else "بدون نیاز به تأیید مدیریت"
+            body = (
+                "🧾 فاکتور جدید\n\n"
+                f"شماره فاکتور: #{invoice_id}\n"
+                f"شرح: {invoice['title']}\n"
+                + (f"توضیحات: {description}\n" if description else "")
+                + f"مبلغ پایه: {format_price(invoice['base_amount'])} تومان\n"
+                + f"مانده قبلی: {format_price(invoice['balance_before'])} تومان\n"
+                + f"مبلغ قابل پرداخت: {format_price(invoice['total_amount'])} تومان\n"
+                + f"روش بررسی پرداخت: {approval_text}\n\n"
+                + payment(config.get("payment_card", "YOUR_CARD"), config.get("payment_name", "CARD_OWNER"))
+                + "\nپس از پرداخت، عکس رسید را از دکمه زیر ارسال کنید."
+            )
+            await client.send_message(
+                target_id, body,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("💳 پرداخت فاکتور", callback_data=f"invoice_pay_{invoice_id}")
+                ]])
+            )
+            await query.message.reply_text(f"✅ فاکتور #{invoice_id} برای کاربر ارسال شد.")
+        except Exception as e:
+            await query.message.reply_text(f"فاکتور #{invoice_id} ساخته شد اما ارسال نشد: {e}")
+        await query.answer("فاکتور ساخته شد.")
 
     @app.on_callback_query(filters.regex(r"^admin_invoice_approve_\d+$"))
     async def admin_invoice_approve(client, query):
