@@ -272,8 +272,10 @@ async def stop_storage():
         except Exception as e:
             print(f"Remote Storage: shutdown sync wait error: {e}")
 
-    if _storage_started and _dirty:
+    if _storage_started:
         try:
+            # Always take one final snapshot; this also waits behind the
+            # startup sync task if it is still holding the sync lock.
             await asyncio.wait_for(sync_all(force=True), timeout=45)
         except asyncio.TimeoutError:
             print("Remote Storage: final shutdown sync timed out; latest changes may not be remote yet.")
