@@ -63,61 +63,63 @@ async def _check_remote_state():
         return
 
     try:
-        message = await remote_storage._get_state_message()
+        db_message = await remote_storage._get_state_message(
+            remote_storage._data_chat_id(),
+            remote_storage.DB_STATE_MARKER
+        )
+        config_message = await remote_storage._get_state_message(
+            remote_storage._config_chat_id(),
+            remote_storage.CONFIG_STATE_MARKER
+        )
 
-        if not message:
+        if not db_message and not config_message:
             return
 
-        # اگر این محیط هنوز یک State موفق محلی نساخته/بازیابی نکرده،
-        # هرچه در Remote Storage داریم بازیابی می‌کنیم. این حالت برای reset کامل است.
+        # On a fresh/ephemeral instance, restore both remote state components.
         if not os.path.exists(READY_MARKER):
             print(
                 "Remote State Monitor: local readiness marker is missing; "
                 "trying remote restore."
             )
-
             restored = await remote_storage.restore_from_remote()
-
             if restored:
                 mark_remote_state_ready()
-
             return
 
-        remote_time = _remote_updated_at(message)
+        local_db_time = _file_mtime(DB_PATH)
+        local_config_time = _file_mtime(CONFIG_PATH)
+        remote_db_time = _remote_updated_at(db_message) if db_message else None
+        remote_config_time = _remote_updated_at(config_message) if config_message else None
 
-        if remote_time is None:
-            return
-
-        local_times = [
-            value
-            for value in (
-                _file_mtime(DB_PATH),
-                _file_mtime(CONFIG_PATH)
+        # Compare each remote artifact with its matching local file. Comparing
+        # the DB timestamp to max(DB, config) could hide a newer config backup.
+        db_is_newer = bool(
+            db_message and (
+                local_db_time is None
+                or (remote_db_time is not None
+                    and remote_db_time > local_db_time + MIN_REMOTE_ADVANTAGE_SECONDS)
             )
-            if value is not None
-        ]
+        )
+        config_is_newer = bool(
+            config_message and (
+                local_config_time is None
+                or (remote_config_time is not None
+                    and remote_config_time > local_config_time + MIN_REMOTE_ADVANTAGE_SECONDS)
+            )
+        )
 
-        if not local_times:
+        if db_is_newer or config_is_newer:
+            newer_parts = []
+            if db_is_newer:
+                newer_parts.append("database")
+            if config_is_newer:
+                newer_parts.append("configuration")
             print(
-                "Remote State Monitor: local files are missing; restoring remote state."
+                "Remote State Monitor: remote "
+                + " and ".join(newer_parts)
+                + " state is newer; restoring remote state."
             )
-
             restored = await remote_storage.restore_from_remote()
-
-            if restored:
-                mark_remote_state_ready()
-
-            return
-
-        local_time = max(local_times)
-
-        if remote_time > local_time + MIN_REMOTE_ADVANTAGE_SECONDS:
-            print(
-                "Remote State Monitor: remote state is newer; restoring it."
-            )
-
-            restored = await remote_storage.restore_from_remote()
-
             if restored:
                 mark_remote_state_ready()
 
@@ -125,7 +127,6 @@ async def _check_remote_state():
         print(
             f"Remote State Monitor error: {e}"
         )
-
 
 async def _monitor_loop():
     try:
