@@ -170,6 +170,12 @@ def init_db():
         )
     """)
 
+    order_columns = {row["name"] for row in cur.execute("PRAGMA table_info(orders)").fetchall()}
+    if "balance_before" not in order_columns:
+        cur.execute("ALTER TABLE orders ADD COLUMN balance_before INTEGER NOT NULL DEFAULT 0")
+    if "expected_total" not in order_columns:
+        cur.execute("ALTER TABLE orders ADD COLUMN expected_total INTEGER NOT NULL DEFAULT 0")
+
     # Backward-compatible invoice migrations.
     invoice_columns = {row["name"] for row in cur.execute("PRAGMA table_info(invoices)").fetchall()}
     if "approval_required" not in invoice_columns:
@@ -432,42 +438,29 @@ def create_order(
     coupon=None
 ):
     conn = get_connection()
-
     cur = conn.cursor()
-
+    cur.execute("BEGIN IMMEDIATE")
+    row = cur.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS balance FROM customer_ledger WHERE user_id = ?",
+        (user_id,)
+    ).fetchone()
+    balance = int(row["balance"] or 0)
+    expected_total = max(0, int(final_price) + balance)
     cur.execute("""
         INSERT INTO orders (
-            user_id,
-            service_id,
-            service_name,
-            order_type,
-            username,
-            original_price,
-            discount_percent,
-            final_price,
-            coupon,
-            status,
-            created_at
+            user_id, service_id, service_name, order_type, username,
+            original_price, discount_percent, final_price, coupon,
+            status, created_at, balance_before, expected_total
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
     """, (
-        user_id,
-        service_id,
-        service_name,
-        order_type,
-        username,
-        original_price,
-        discount_percent,
-        final_price,
-        coupon,
-        now()
+        user_id, service_id, service_name, order_type, username,
+        original_price, discount_percent, final_price, coupon,
+        now(), balance, expected_total
     ))
-
     order_id = cur.lastrowid
-
     conn.commit()
     conn.close()
-
     return order_id
 
 
@@ -530,21 +523,35 @@ def set_receipt(order_id, file_id):
     conn.close()
 
 
-def approve_order(order_id):
+def approve_order(order_id, created_by=None):
     conn = get_connection()
-
-    conn.execute("""
-        UPDATE orders
-        SET status = 'approved',
-            approved_at = ?
-        WHERE id = ?
-    """, (
-        now(),
-        order_id
-    ))
-
+    cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
+    row = cur.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+    if not row or row["status"] != "pending":
+        conn.rollback()
+        conn.close()
+        return False
+    order = dict(row)
+    cur.execute("""
+        UPDATE orders SET status = 'approved', approved_at = ?
+        WHERE id = ? AND status = 'pending'
+    """, (now(), order_id))
+    if cur.rowcount != 1:
+        conn.rollback()
+        conn.close()
+        return False
+    old_balance = int(order.get("balance_before") or 0)
+    settlement = -old_balance if old_balance > 0 else min(-old_balance, int(order["final_price"]))
+    if settlement:
+        cur.execute("""
+            INSERT INTO customer_ledger (user_id, amount, description, created_at, created_by)
+            VALUES (?, ?, ?, ?, ?)
+        """, (order["user_id"], settlement,
+              "تسویه مانده حساب در سفارش #" + str(order_id), now(), created_by))
     conn.commit()
     conn.close()
+    return True
 
 
 def reject_order(order_id):
