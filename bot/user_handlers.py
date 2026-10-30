@@ -412,7 +412,7 @@ def register(app, config):
                 for invoice in pending:
                     lines.append(
                         f"#{invoice['id']} {invoice['title']} — "
-                        f"{format_price(invoice['total_amount'])} تومان"
+                        f"{format_price(max(0, int(invoice['total_amount']) - int(invoice.get('paid_amount') or 0)))} تومان مانده"
                     )
                     rows.append([InlineKeyboardButton(
                         f"💳 پرداخت فاکتور #{invoice['id']}",
@@ -1249,9 +1249,10 @@ def register(app, config):
             else:
                 await query.answer("تسویه فاکتور انجام نشد؛ با پشتیبانی تماس بگیرید.", show_alert=True)
             return
+        remaining_amount = max(0, int(invoice["total_amount"]) - int(invoice.get("paid_amount") or 0))
         user_states[query.from_user.id] = {"step": "waiting_invoice_receipt", "invoice_id": invoice_id}
         await query.message.reply_text(
-            f"💰 مبلغ قابل پرداخت: {format_price(invoice['total_amount'])} تومان\n"
+            f"💰 مبلغ باقی‌مانده قابل پرداخت: {format_price(remaining_amount)} تومان\n"
             f"💳 شماره کارت: {config.get('payment_card', 'YOUR_CARD')}\n"
             f"👤 صاحب کارت: {config.get('payment_name', 'CARD_OWNER')}\n\n"
             "پس از پرداخت، عکس رسید را ارسال کنید."
