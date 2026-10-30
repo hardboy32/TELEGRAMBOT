@@ -1838,7 +1838,9 @@ def register(app, config):
 
             return
 
-        approve_order(order_id)
+        if not approve_order(order_id, created_by=query.from_user.id):
+            await query.answer("این سفارش قبلاً بررسی شده است.", show_alert=True)
+            return
 
         try:
 
