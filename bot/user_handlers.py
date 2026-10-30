@@ -96,6 +96,39 @@ def register(app, config):
         except Exception:
             return False
 
+    # Membership must be enforced on every private entry point, not only
+    # /start; otherwise users can bypass the join gate by sending callbacks or
+    # purchase commands directly.
+    @app.on_message(
+        filters.private & ~filters.command("start"),
+        group=-21
+    )
+    async def membership_message_gate(client, message):
+        user_id = message.from_user.id
+        if admin(user_id, config):
+            return
+        if not await is_joined(client, user_id):
+            await message.reply_text(
+                join_required(config.get("channel_username", "@YOUR_CHANNEL")),
+                reply_markup=join_keyboard(config.get("channel_username", "@YOUR_CHANNEL"))
+            )
+            raise StopPropagation
+
+    @app.on_callback_query(
+        ~filters.regex(r"^check_join$"),
+        group=-21
+    )
+    async def membership_callback_gate(client, query):
+        user_id = query.from_user.id
+        if admin(user_id, config):
+            return
+        if not await is_joined(client, user_id):
+            await query.answer(
+                "برای استفاده از ربات ابتدا عضو کانال شوید.",
+                show_alert=True
+            )
+            raise StopPropagation
+
     async def show_home(message):
         await message.reply_text(
             welcome(
