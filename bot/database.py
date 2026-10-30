@@ -1100,17 +1100,15 @@ def record_successful_referral(
 
 
 def get_referral_count(user_id):
+    # The users counter is incremented transactionally with each unique
+    # referral and is also the value reset_user_info clears.
     conn = get_connection()
-
-    row = conn.execute("""
-        SELECT COUNT(*) AS count
-        FROM referral_success
-        WHERE inviter_id = ?
-    """, (user_id,)).fetchone()
-
+    row = conn.execute(
+        "SELECT referral_success FROM users WHERE id = ?",
+        (user_id,)
+    ).fetchone()
     conn.close()
-
-    return row["count"]
+    return int(row["referral_success"] or 0) if row else 0
 
 
 def get_referral_reward_count(user_id):
