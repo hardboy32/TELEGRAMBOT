@@ -231,7 +231,7 @@ async def main():
         if storage_started:
 
             start_file_watcher()
-            start_remote_state_monitor()
+            start_remote_state_monitor(config)
             start_temporary_cleanup()
 
             # Initial backup runs in the background after handlers are ready,
