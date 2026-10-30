@@ -175,6 +175,11 @@ def init_db():
         cur.execute("ALTER TABLE orders ADD COLUMN balance_before INTEGER NOT NULL DEFAULT 0")
     if "expected_total" not in order_columns:
         cur.execute("ALTER TABLE orders ADD COLUMN expected_total INTEGER NOT NULL DEFAULT 0")
+    cur.execute("""
+        UPDATE orders
+        SET expected_total = MAX(0, final_price + COALESCE(balance_before, 0))
+        WHERE expected_total = 0 AND final_price > 0
+    """)
 
     # Backward-compatible invoice migrations.
     invoice_columns = {row["name"] for row in cur.execute("PRAGMA table_info(invoices)").fetchall()}
