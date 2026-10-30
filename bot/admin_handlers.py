@@ -72,7 +72,9 @@ from bot.database import (
 )
 
 
-admin_states = {}
+from bot.state_store import PersistentStateMap
+
+admin_states = PersistentStateMap("admin", ttl_seconds=24 * 60 * 60)
 
 
 def admin_reply_menu():
