@@ -1346,7 +1346,7 @@ def _backup_message_timestamp(message):
     import re
 
     match = re.search(
-        r"(?:Backup time|Updated):\\s*(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2})",
+        r"(?:Backup time|Updated):\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})",
         caption
     )
     if not match:
