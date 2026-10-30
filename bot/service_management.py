@@ -41,6 +41,8 @@ _MENU_TEXTS = {
     "🏠 منوی کاربر",
     "⬅️ بازگشت",
     "❌ لغو",
+    "❌ لغو سفارش",
+    "🏠 منوی اصلی",
 }
 
 
@@ -234,9 +236,9 @@ def register(app, config):
                     await message.reply_text("❌ سرویس پیدا نشد.")
                     raise StopPropagation
 
+                # Editing volume must not silently overwrite the service name.
                 update_service(
                     service_id,
-                    name=f"{volume}GB",
                     volume_gb=volume
                 )
 
