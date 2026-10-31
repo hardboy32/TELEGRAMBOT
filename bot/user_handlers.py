@@ -257,7 +257,7 @@ def register(app, config):
         state = user_states.get(user_id)
 
         if (state and state.get("step") == "waiting_invoice_receipt"
-                and text in ("🎟️ کد تخفیف", "📚 آموزش", "🔄 تمدید")):
+                and text in ("🛒 خرید سرویس", "🔄 تمدید", "🎟️ کد تخفیف", "📚 آموزش")):
             await message.reply_text(
                 "⏳ ابتدا رسید فاکتور فعلی را ارسال کنید یا پرداخت آن را لغو کنید."
             )
