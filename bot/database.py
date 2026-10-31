@@ -547,6 +547,30 @@ def record_invoice_partial_payment(invoice_id, amount, created_by=None):
     }
 
 
+def _rebalance_pending_order_balances(cur, user_id):
+    """Allocate a customer's current balance across pending orders once each."""
+    balance_row = cur.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS balance "
+        "FROM customer_ledger WHERE user_id = ?",
+        (user_id,)
+    ).fetchone()
+    remaining = int(balance_row["balance"] or 0)
+    pending = cur.execute("""
+        SELECT id, final_price FROM orders
+        WHERE user_id = ? AND status = 'pending'
+        ORDER BY id ASC
+    """, (user_id,)).fetchall()
+    for item in pending:
+        allocated = remaining
+        expected = max(0, int(item["final_price"] or 0) + allocated)
+        cur.execute("""
+            UPDATE orders
+            SET balance_before = ?, expected_total = ?
+            WHERE id = ? AND status = 'pending'
+        """, (allocated, expected, item["id"]))
+        remaining -= allocated
+
+
 def create_order(
     user_id,
     service_id,
@@ -562,20 +586,17 @@ def create_order(
     cur = conn.cursor()
     cur.execute("BEGIN IMMEDIATE")
 
-    # Prevent parallel payment snapshots from charging/settling the same balance.
-    open_order = cur.execute(
-        "SELECT id FROM orders WHERE user_id = ? AND status = 'pending' LIMIT 1",
-        (user_id,)
-    ).fetchone()
+    # Orders can be created independently. An approval-required invoice still
+    # owns the customer's balance snapshot, so keep that cross-workflow guard.
     open_invoice = cur.execute("""
         SELECT id FROM invoices
         WHERE user_id = ? AND status = 'pending' AND approval_required = 1
         LIMIT 1
     """, (user_id,)).fetchone()
-    if open_order or open_invoice:
+    if open_invoice:
         conn.rollback()
         conn.close()
-        raise ValueError("برای این حساب یک پرداخت در انتظار وجود دارد؛ ابتدا همان پرداخت را تکمیل یا لغو کنید.")
+        raise ValueError("برای این حساب یک فاکتور در انتظار پرداخت وجود دارد؛ ابتدا همان فاکتور را تکمیل کنید.")
 
     # Validate and consume a coupon in the same transaction as order creation.
     # This prevents races at the usage limit and avoids consuming a coupon if
@@ -610,6 +631,15 @@ def create_order(
         (user_id,)
     ).fetchone()
     balance = int(row["balance"] or 0)
+    reserved_row = cur.execute(
+        "SELECT COALESCE(SUM(balance_before), 0) AS reserved "
+        "FROM orders WHERE user_id = ? AND status = 'pending'",
+        (user_id,)
+    ).fetchone()
+    # Allocate any existing debt/credit to the oldest outstanding order only.
+    # This prevents every parallel order from charging or consuming the same
+    # account balance snapshot.
+    balance -= int(reserved_row["reserved"] or 0)
     expected_total = max(0, int(final_price) + balance)
     cur.execute("""
         INSERT INTO orders (
@@ -624,6 +654,7 @@ def create_order(
         now(), balance, expected_total
     ))
     order_id = cur.lastrowid
+    _rebalance_pending_order_balances(cur, user_id)
     conn.commit()
     conn.close()
     return order_id
@@ -650,8 +681,6 @@ def get_pending_orders():
         SELECT *
         FROM orders
         WHERE status = 'pending'
-          AND receipt_file_id IS NOT NULL
-          AND TRIM(receipt_file_id) != ''
         ORDER BY id ASC
     """).fetchall()
 
@@ -699,19 +728,6 @@ def approve_order(order_id, created_by=None):
         conn.close()
         return False
     order = dict(row)
-    other_order = cur.execute(
-        "SELECT id FROM orders WHERE user_id = ? AND status = 'pending' AND id != ? LIMIT 1",
-        (order["user_id"], order_id)
-    ).fetchone()
-    other_invoice = cur.execute("""
-        SELECT id FROM invoices
-        WHERE user_id = ? AND status = 'pending' AND approval_required = 1
-        LIMIT 1
-    """, (order["user_id"],)).fetchone()
-    if other_order or other_invoice:
-        conn.rollback()
-        conn.close()
-        return False
     cur.execute("""
         UPDATE orders SET status = 'approved', approved_at = ?
         WHERE id = ? AND status = 'pending'
@@ -749,7 +765,7 @@ def reject_order(order_id):
     cur = conn.cursor()
     cur.execute("BEGIN IMMEDIATE")
     row = cur.execute(
-        "SELECT status, coupon FROM orders WHERE id = ?",
+        "SELECT status, coupon, user_id FROM orders WHERE id = ?",
         (order_id,)
     ).fetchone()
     if not row or row["status"] != "pending":
@@ -773,6 +789,9 @@ def reject_order(order_id):
             WHERE code = ?
         """, (str(row["coupon"]).upper(),))
 
+    _rebalance_pending_order_balances(cur, cur.execute(
+        "SELECT user_id FROM orders WHERE id = ?", (order_id,)
+    ).fetchone()["user_id"])
     conn.commit()
     conn.close()
     return True
@@ -944,6 +963,8 @@ def delete_pending_order(order_id, user_id=None):
         )
     cur.execute("DELETE FROM orders WHERE id = ? AND status = 'pending'", (order_id,))
     deleted = cur.rowcount == 1
+    if deleted:
+        _rebalance_pending_order_balances(cur, order["user_id"])
     conn.commit()
     conn.close()
     return deleted
@@ -981,6 +1002,8 @@ def delete_order(order_id):
         """, (str(order["coupon"]).upper(),))
 
     cur.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    if order["status"] == "pending":
+        _rebalance_pending_order_balances(cur, order["user_id"])
     deleted = cur.rowcount == 1
     conn.commit()
     conn.close()
@@ -1042,6 +1065,8 @@ def update_order_status(order_id, status):
         WHERE id = ? AND status = 'rejected'
     """, (order_id,))
     changed = cur.rowcount
+    if changed:
+        _rebalance_pending_order_balances(cur, order["user_id"])
     conn.commit()
     conn.close()
     return bool(changed)
