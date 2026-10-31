@@ -1650,6 +1650,23 @@ def get_customer_balance(user_id):
     conn.close()
     return int(row["balance"] or 0)
 
+def get_available_customer_balance(user_id):
+    """Return account balance not already allocated to existing pending orders."""
+    conn = get_connection()
+    row = conn.execute("""
+        SELECT
+            COALESCE((
+                SELECT SUM(amount) FROM customer_ledger WHERE user_id = ?
+            ), 0) -
+            COALESCE((
+                SELECT SUM(balance_before) FROM orders
+                WHERE user_id = ? AND status = 'pending'
+            ), 0) AS balance
+    """, (user_id, user_id)).fetchone()
+    conn.close()
+    return int(row["balance"] or 0)
+
+
 
 def add_customer_ledger_entry(user_id, amount, description, created_by=None):
     amount = int(amount)
