@@ -701,59 +701,48 @@ def register(app, config):
         if text == "👥 کاربران":
 
             count = get_users_count()
-            page_size = 10
+            page_size = 20
             users = get_users_page(0, page_size)
 
             lines = [
-                "👥 کاربران\n",
-                f"تعداد کل: {count}\n",
-                "روی هر کاربر بزنید تا جزئیات باز شود.\n"
+                "👥 کاربران\\n",
+                f"تعداد کل: {count}\\n",
+                "برای مشاهده جزئیات، نام کاربر را انتخاب کنید."
             ]
 
             rows = []
-
-            for u in users:
-                uname = u.get("username") or "—"
-                name = u.get("first_name") or "—"
-                lines.append(
-                    f"🆔 <code>{u['id']}</code> | {uname} | {name}"
-                )
-                rows.append(
-                    [
-                        InlineKeyboardButton(
-                            f"👤 {name} ({u['id']})",
-                            callback_data=f"admin_user_{u['id']}"
-                        )
-                    ]
-                )
+            for index in range(0, len(users), 2):
+                row = []
+                for u in users[index:index + 2]:
+                    name = u.get("first_name") or u.get("username") or "بدون نام"
+                    row.append(InlineKeyboardButton(
+                        f"👤 {name}"[:60],
+                        callback_data=f"admin_user_{u['id']}"
+                    ))
+                rows.append(row)
 
             if count > page_size:
-                rows.append(
-                    [
-                        InlineKeyboardButton(
-                            "بعدی ➡️",
-                            callback_data=f"admin_users_page_{page_size}"
-                        )
-                    ]
-                )
-
-            rows.append(
-                [
+                rows.append([
                     InlineKeyboardButton(
-                        "⬅️ بازگشت",
-                        callback_data="admin_home"
+                        "بعدی ➡️",
+                        callback_data=f"admin_users_page_{page_size}"
                     )
-                ]
-            )
+                ])
+
+            rows.append([
+                InlineKeyboardButton(
+                    "⬅️ بازگشت",
+                    callback_data="admin_home"
+                )
+            ])
 
             await message.reply_text(
-                "\n".join(lines),
+                "\\n".join(lines),
                 reply_markup=InlineKeyboardMarkup(rows),
                 parse_mode=enums.ParseMode.HTML
             )
 
             raise StopPropagation
-
 
         if text == "📊 آمار":
 
