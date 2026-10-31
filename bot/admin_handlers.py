@@ -705,8 +705,8 @@ def register(app, config):
             users = get_users_page(0, page_size)
 
             lines = [
-                "👥 کاربران\\n",
-                f"تعداد کل: {count}\\n",
+                "👥 کاربران\n",
+                f"تعداد کل: {count}\n",
                 "برای مشاهده جزئیات، نام کاربر را انتخاب کنید."
             ]
 
@@ -737,7 +737,7 @@ def register(app, config):
             ])
 
             await message.reply_text(
-                "\\n".join(lines),
+                "\n".join(lines),
                 reply_markup=InlineKeyboardMarkup(rows),
                 parse_mode=enums.ParseMode.HTML
             )
