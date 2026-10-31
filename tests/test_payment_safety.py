@@ -26,13 +26,45 @@ class PaymentSafetyTests(unittest.TestCase):
             discount_percent=0, final_price=1000
         )
 
-    def test_second_pending_order_is_blocked_until_first_is_rejected(self):
+    def test_multiple_pending_orders_are_independent(self):
         first = self._order()
-        with self.assertRaises(ValueError):
-            self._order()
-        self.assertTrue(database.reject_order(first))
         second = self._order()
-        self.assertIsNotNone(second)
+        self.assertNotEqual(first, second)
+
+        self.assertTrue(database.set_receipt(first, "receipt-first"))
+        self.assertTrue(database.set_receipt(second, "receipt-second"))
+
+        # Approval order must not depend on other pending orders by the same user.
+        self.assertTrue(database.approve_order(second))
+        self.assertTrue(database.approve_order(first))
+        self.assertEqual(database.get_order(first)["status"], "approved")
+        self.assertEqual(database.get_order(second)["status"], "approved")
+
+    def test_pending_orders_allocate_balance_once_and_reassign_after_rejection(self):
+        first = self._order()
+        second = self._order()
+
+        first_order = database.get_order(first)
+        second_order = database.get_order(second)
+        self.assertEqual(first_order["balance_before"], 500)
+        self.assertEqual(first_order["expected_total"], 1500)
+        self.assertEqual(second_order["balance_before"], 0)
+        self.assertEqual(second_order["expected_total"], 1000)
+
+        self.assertTrue(database.reject_order(first))
+        second_order = database.get_order(second)
+        self.assertEqual(second_order["balance_before"], 500)
+        self.assertEqual(second_order["expected_total"], 1500)
+
+        self.assertTrue(database.set_receipt(second, "receipt-second"))
+        self.assertTrue(database.approve_order(second))
+        self.assertEqual(database.get_customer_balance(100), 0)
+
+    def test_admin_pending_list_includes_orders_without_receipts(self):
+        first = self._order()
+        second = self._order()
+        pending_ids = {item["id"] for item in database.get_pending_orders()}
+        self.assertTrue({first, second}.issubset(pending_ids))
 
     def test_order_and_invoice_cannot_hold_parallel_balance_snapshots(self):
         first = self._order()
