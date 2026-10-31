@@ -789,9 +789,7 @@ def reject_order(order_id):
             WHERE code = ?
         """, (str(row["coupon"]).upper(),))
 
-    _rebalance_pending_order_balances(cur, cur.execute(
-        "SELECT user_id FROM orders WHERE id = ?", (order_id,)
-    ).fetchone()["user_id"])
+    _rebalance_pending_order_balances(cur, row["user_id"])
     conn.commit()
     conn.close()
     return True
@@ -1657,11 +1655,13 @@ def add_customer_ledger_entry(user_id, amount, description, created_by=None):
         raise ValueError("مبلغ گردش حساب نمی‌تواند صفر باشد.")
     conn = get_connection()
     cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
     cur.execute("""
         INSERT INTO customer_ledger (user_id, amount, description, created_at, created_by)
         VALUES (?, ?, ?, ?, ?)
     """, (user_id, amount, str(description).strip(), now(), created_by))
     entry_id = cur.lastrowid
+    _rebalance_pending_order_balances(cur, user_id)
     conn.commit()
     conn.close()
     return entry_id
