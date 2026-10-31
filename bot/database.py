@@ -215,6 +215,14 @@ def init_db():
     if "invoice_type" not in invoice_columns:
         cur.execute("ALTER TABLE invoices ADD COLUMN invoice_type TEXT NOT NULL DEFAULT 'payment'")
 
+    # Permanently purge legacy rejected orders so they no longer appear
+    # in customer history or admin views after this update.
+    cur.execute("""
+        DELETE FROM subscriptions
+        WHERE order_id IN (SELECT id FROM orders WHERE status = 'rejected')
+    """)
+    cur.execute("DELETE FROM orders WHERE status = 'rejected'")
+
     # seed default platforms if empty
     existing = cur.execute(
         "SELECT COUNT(*) AS c FROM tutorials"
@@ -762,7 +770,7 @@ def approve_order(order_id, created_by=None):
 
 
 def reject_order(order_id):
-    """Reject a pending order once and release its reserved coupon use."""
+    """Reject and permanently remove a pending order and its stored receipt."""
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("BEGIN IMMEDIATE")
@@ -775,21 +783,18 @@ def reject_order(order_id):
         conn.close()
         return False
 
-    cur.execute("""
-        UPDATE orders SET status = 'rejected'
-        WHERE id = ? AND status = 'pending'
-    """, (order_id,))
-    if cur.rowcount != 1:
-        conn.rollback()
-        conn.close()
-        return False
-
     if row["coupon"]:
         cur.execute("""
             UPDATE coupons
             SET used_count = MAX(0, used_count - 1)
             WHERE code = ?
         """, (str(row["coupon"]).upper(),))
+
+    cur.execute("DELETE FROM orders WHERE id = ? AND status = 'pending'", (order_id,))
+    if cur.rowcount != 1:
+        conn.rollback()
+        conn.close()
+        return False
 
     _rebalance_pending_order_balances(cur, row["user_id"])
     conn.commit()
@@ -984,13 +989,8 @@ def delete_order(order_id):
         conn.close()
         return False
 
-    linked_subscription = cur.execute(
-        "SELECT 1 FROM subscriptions WHERE order_id = ? LIMIT 1", (order_id,)
-    ).fetchone()
-    if linked_subscription and order["status"] == "approved":
-        conn.rollback()
-        conn.close()
-        return False
+    # Admin deletion also removes subscriptions created from this order.
+    cur.execute("DELETE FROM subscriptions WHERE order_id = ?", (order_id,))
 
     # A pending order reserves one coupon use. Releasing/deleting that order
     # must return the reservation so abandoned orders do not exhaust coupons.
@@ -1072,15 +1072,23 @@ def update_order_status(order_id, status):
     return bool(changed)
 
 
-def delete_subscription(subscription_id):
+def delete_subscription(subscription_id, user_id=None):
+    """Delete a subscription; optionally restrict deletion to its owner."""
     conn = get_connection()
-    conn.execute(
-        "DELETE FROM subscriptions WHERE id = ?",
-        (subscription_id,)
-    )
+    if user_id is None:
+        cur = conn.execute(
+            "DELETE FROM subscriptions WHERE id = ?",
+            (subscription_id,)
+        )
+    else:
+        cur = conn.execute(
+            "DELETE FROM subscriptions WHERE id = ? AND user_id = ?",
+            (subscription_id, user_id)
+        )
+    deleted = cur.rowcount == 1
     conn.commit()
     conn.close()
-    return True
+    return deleted
 
 
 def update_subscription_fields(
