@@ -1064,15 +1064,23 @@ def update_order_status(order_id, status):
     return bool(changed)
 
 
-def delete_subscription(subscription_id):
+def delete_subscription(subscription_id, user_id=None):
+    """Delete a subscription; optionally restrict deletion to its owner."""
     conn = get_connection()
-    conn.execute(
-        "DELETE FROM subscriptions WHERE id = ?",
-        (subscription_id,)
-    )
+    if user_id is None:
+        cur = conn.execute(
+            "DELETE FROM subscriptions WHERE id = ?",
+            (subscription_id,)
+        )
+    else:
+        cur = conn.execute(
+            "DELETE FROM subscriptions WHERE id = ? AND user_id = ?",
+            (subscription_id, user_id)
+        )
+    deleted = cur.rowcount == 1
     conn.commit()
     conn.close()
-    return True
+    return deleted
 
 
 def update_subscription_fields(
