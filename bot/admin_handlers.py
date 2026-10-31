@@ -2411,31 +2411,25 @@ def register(app, config):
             return
 
         count = get_users_count()
-        page_size = 10
+        page_size = 20
         users = get_users_page(0, page_size)
 
         lines = [
             "👥 کاربران\n",
             f"تعداد کل: {count}\n",
-            "روی هر کاربر بزنید تا جزئیات باز شود.\n"
+            "برای مشاهده جزئیات، نام کاربر را انتخاب کنید."
         ]
 
         rows = []
-
-        for u in users:
-            uname = u.get("username") or "—"
-            name = u.get("first_name") or "—"
-            lines.append(
-                f"🆔 <code>{u['id']}</code> | {uname} | {name}"
-            )
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        f"👤 {name} ({u['id']})",
-                        callback_data=f"admin_user_{u['id']}"
-                    )
-                ]
-            )
+        for index in range(0, len(users), 2):
+            row = []
+            for u in users[index:index + 2]:
+                name = u.get("first_name") or u.get("username") or "بدون نام"
+                row.append(InlineKeyboardButton(
+                    f"👤 {name}"[:60],
+                    callback_data=f"admin_user_{u['id']}"
+                ))
+            rows.append(row)
 
         if count > page_size:
             rows.append(
@@ -2477,33 +2471,26 @@ def register(app, config):
             return
 
         offset = int(query.data.split("_")[-1])
-        page_size = 10
+        page_size = 20
         count = get_users_count()
         users = get_users_page(offset, page_size)
 
         lines = [
             "👥 کاربران\n",
             f"تعداد کل: {count}\n",
-            f"از ردیف {offset + 1}\n",
-            "روی هر کاربر بزنید تا جزئیات باز شود.\n"
+            f"از کاربر {offset + 1} تا {offset + len(users)}"
         ]
 
         rows = []
-
-        for u in users:
-            uname = u.get("username") or "—"
-            name = u.get("first_name") or "—"
-            lines.append(
-                f"🆔 <code>{u['id']}</code> | {uname} | {name}"
-            )
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        f"👤 {name} ({u['id']})",
-                        callback_data=f"admin_user_{u['id']}"
-                    )
-                ]
-            )
+        for index in range(0, len(users), 2):
+            row = []
+            for u in users[index:index + 2]:
+                name = u.get("first_name") or u.get("username") or "بدون نام"
+                row.append(InlineKeyboardButton(
+                    f"👤 {name}"[:60],
+                    callback_data=f"admin_user_{u['id']}"
+                ))
+            rows.append(row)
 
         nav = []
 
