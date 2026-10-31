@@ -256,6 +256,13 @@ def register(app, config):
 
         state = user_states.get(user_id)
 
+        if (state and state.get("step") == "waiting_invoice_receipt"
+                and text in ("🎟️ کد تخفیف", "📚 آموزش", "🔄 تمدید")):
+            await message.reply_text(
+                "⏳ ابتدا رسید فاکتور فعلی را ارسال کنید یا پرداخت آن را لغو کنید."
+            )
+            return
+
         # Hiding a menu button is not access control: enforce feature toggles
         # on manually typed button labels as well.
         feature_by_text = {
