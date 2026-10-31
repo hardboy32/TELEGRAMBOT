@@ -13,6 +13,7 @@ from bot.database import (
     get_user_orders,
     get_user_subscriptions,
     get_subscription,
+    delete_subscription,
     get_referrer,
     get_referral_count,
     get_referral_reward_count,
@@ -763,7 +764,9 @@ def register(app, config):
 
             await message.reply_text(
                 text_out,
-                reply_markup=_menu(config, user_id),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🗑 حذف اشتراک من", callback_data=f"user_delete_sub_{sub['id']}")]
+                ]),
                 parse_mode=enums.ParseMode.HTML
             )
 
@@ -1517,9 +1520,51 @@ def register(app, config):
 
         await query.message.reply_text(
             text,
-            reply_markup=_menu(config, query.from_user.id)
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🗑 حذف اشتراک من", callback_data=f"user_delete_sub_{sub_id}")]
+            ])
         )
 
+        await query.answer()
+
+    @app.on_callback_query(
+        filters.regex(r"^user_delete_sub_\d+$")
+    )
+    async def user_delete_subscription_prompt(client, query):
+        sub_id = int(query.data.rsplit("_", 1)[1])
+        sub = get_subscription(sub_id)
+        if not sub or int(sub["user_id"]) != query.from_user.id:
+            await query.answer("❌ این اشتراک متعلق به شما نیست.", show_alert=True)
+            return
+
+        await query.message.reply_text(
+            "⚠️ مطمئنید می‌خواهید این اشتراک را از فهرست خود حذف کنید؟",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ بله، حذف شود", callback_data=f"user_delete_sub_yes_{sub_id}"),
+                    InlineKeyboardButton("❌ انصراف", callback_data="user_delete_sub_cancel")
+                ]
+            ])
+        )
+        await query.answer()
+
+    @app.on_callback_query(
+        filters.regex(r"^user_delete_sub_yes_\d+$")
+    )
+    async def user_delete_subscription_confirm(client, query):
+        sub_id = int(query.data.rsplit("_", 1)[1])
+        if not delete_subscription(sub_id, user_id=query.from_user.id):
+            await query.answer("❌ اشتراک پیدا نشد یا قبلاً حذف شده است.", show_alert=True)
+            return
+
+        await query.message.edit_text("🗑 اشتراک از فهرست شما حذف شد.")
+        await query.answer("اشتراک حذف شد.")
+
+    @app.on_callback_query(
+        filters.regex(r"^user_delete_sub_cancel$")
+    )
+    async def user_delete_subscription_cancel(client, query):
+        await query.message.edit_text("عملیات حذف لغو شد.")
         await query.answer()
 
     @app.on_callback_query(
