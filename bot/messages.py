@@ -27,7 +27,7 @@ def payment(card, name):
     )
 
 
-def order_text(service, username, discount, final_price, order_type="buy"):
+def order_text(service, username, discount, final_price, order_type="buy", balance=0):
     if order_type == "renew":
         title = "🔄 تمدید سرویس"
         intro = "اطلاعات تمدید سرویس شما:"
@@ -49,10 +49,20 @@ def order_text(service, username, discount, final_price, order_type="buy"):
     if discount:
         text += f"🎟️ تخفیف: {discount}%\n"
 
-    text += (
-        f"💵 مبلغ قابل پرداخت: {final_price:,} تومان\n\n"
-        f"{action}"
-    )
+    balance = int(balance or 0)
+    payable = max(0, int(final_price) + balance)
+
+    if balance > 0:
+        text += f"📒 بدهی قبلی: {balance:,} تومان\\n"
+    elif balance < 0:
+        text += f"📒 اعتبار حساب: {abs(balance):,} تومان\\n"
+
+    text += f"💵 مبلغ قابل پرداخت: {payable:,} تومان\\n"
+
+    if balance < 0 and abs(balance) > int(final_price):
+        text += f"🎁 اعتبار باقی‌مانده پس از این خرید: {abs(balance) - int(final_price):,} تومان\\n"
+
+    text += f"\\n{action}"
 
     return text
 

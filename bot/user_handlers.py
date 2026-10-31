@@ -24,6 +24,7 @@ from bot.database import (
     set_invoice_receipt,
     mark_invoice_paid,
     get_customer_balance,
+    get_available_customer_balance,
     get_customer_ledger,
     get_user_invoices
 )
@@ -374,9 +375,10 @@ def register(app, config):
             sub_map = {}
 
             for sub in subscriptions:
+                username = sub.get("username") or "بدون نام کاربری"
                 label = (
                     f"📦 {sub['service_name']} | "
-                    f"{sub['username']}"
+                    f"@{username}"
                 )
                 sub_map[label] = sub["id"]
 
@@ -698,8 +700,9 @@ def register(app, config):
                         new_state["username"],
                         discount,
                         final_price,
-                        "renew"
-                    ) + "\n\n" + _customer_balance_text(user_id),
+                        "renew",
+                        balance=get_available_customer_balance(user_id)
+                    ),
                     reply_markup=confirm_reply_keyboard()
                 )
                 return
@@ -1030,8 +1033,9 @@ def register(app, config):
                     service,
                     username,
                     discount,
-                    final_price
-                ) + "\n\n" + _customer_balance_text(user_id),
+                    final_price,
+                    balance=get_available_customer_balance(user_id)
+                ),
                 reply_markup=confirm_order_keyboard()
             )
 
