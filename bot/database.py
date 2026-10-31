@@ -1022,7 +1022,7 @@ def update_order_status(order_id, status):
     cur = conn.cursor()
     cur.execute("BEGIN IMMEDIATE")
     order = cur.execute(
-        "SELECT status, coupon FROM orders WHERE id = ?",
+        "SELECT status, coupon, user_id FROM orders WHERE id = ?",
         (order_id,)
     ).fetchone()
     if not order:
