@@ -215,6 +215,14 @@ def init_db():
     if "invoice_type" not in invoice_columns:
         cur.execute("ALTER TABLE invoices ADD COLUMN invoice_type TEXT NOT NULL DEFAULT 'payment'")
 
+    # Permanently purge legacy rejected orders so they no longer appear
+    # in customer history or admin views after this update.
+    cur.execute("""
+        DELETE FROM subscriptions
+        WHERE order_id IN (SELECT id FROM orders WHERE status = 'rejected')
+    """)
+    cur.execute("DELETE FROM orders WHERE status = 'rejected'")
+
     # seed default platforms if empty
     existing = cur.execute(
         "SELECT COUNT(*) AS c FROM tutorials"
