@@ -754,6 +754,8 @@ def approve_order(order_id, created_by=None):
             VALUES (?, ?, ?, ?, ?)
         """, (order["user_id"], settlement,
               "تسویه مانده حساب در سفارش #" + str(order_id), now(), created_by))
+    # Any unused credit/debt becomes available to the remaining pending orders.
+    _rebalance_pending_order_balances(cur, order["user_id"])
     conn.commit()
     conn.close()
     return True
