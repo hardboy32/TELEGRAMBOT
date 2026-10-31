@@ -404,39 +404,39 @@ def service_detail_keyboard(service_id):
     )
 
 
-def order_keyboard(order_id):
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "✅ تأیید پرداخت",
-                    callback_data=f"admin_approve_{order_id}"
-                ),
-                InlineKeyboardButton(
-                    "❌ رد پرداخت",
-                    callback_data=f"admin_reject_{order_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "⚙️ ثبت کانفیگ",
-                    callback_data=f"admin_config_{order_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🗑 حذف سفارش بدون اطلاع کاربر",
-                    callback_data=f"admin_delete_silent_{order_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "⬅️ بازگشت",
-                    callback_data="admin_pending"
-                )
-            ]
-        ]
-    )
+def order_keyboard(order_id, has_receipt=True, status="pending"):
+    rows = []
+    if status == "pending" and has_receipt:
+        rows.append([
+            InlineKeyboardButton(
+                "✅ تأیید پرداخت",
+                callback_data=f"admin_approve_{order_id}"
+            ),
+            InlineKeyboardButton(
+                "❌ رد پرداخت",
+                callback_data=f"admin_reject_{order_id}"
+            )
+        ])
+    elif status == "pending":
+        rows.append([InlineKeyboardButton(
+            "⏳ منتظر ارسال رسید مشتری",
+            callback_data=f"admin_order_{order_id}"
+        )])
+    if status == "approved":
+        rows.append([InlineKeyboardButton(
+            "⚙️ ثبت کانفیگ",
+            callback_data=f"admin_config_{order_id}"
+        )])
+    if status == "pending":
+        rows.append([InlineKeyboardButton(
+            "🗑 حذف سفارش بدون اطلاع کاربر",
+            callback_data=f"admin_delete_silent_{order_id}"
+        )])
+    rows.append([InlineKeyboardButton(
+        "⬅️ بازگشت",
+        callback_data="admin_pending"
+    )])
+    return InlineKeyboardMarkup(rows)
 
 
 
@@ -1764,7 +1764,8 @@ def register(app, config):
                     InlineKeyboardButton(
                         f"{request_icon} #{order['id']} | "
                         f"{order['service_name']} | "
-                        f"{format_price(order['final_price'])}",
+                        f"{format_price(order['final_price'])} | "
+                        f"{'📎 رسید دارد' if order.get('receipt_file_id') else '⏳ بدون رسید'}",
                         callback_data=f"admin_order_{order['id']}"
                     )
                 ]
@@ -1846,12 +1847,17 @@ def register(app, config):
             f"💵 مبلغ نهایی: "
             f"{format_price(order['final_price'])} تومان\n"
             f"🔵 وضعیت: {order['status']}\n"
+            f"🧾 رسید: {'ثبت شده' if str(order.get('receipt_file_id') or '').strip() else 'هنوز ارسال نشده'}\n"
             f"📅 تاریخ: {order['created_at']}"
         )
 
         await query.message.edit_text(
             text,
-            reply_markup=order_keyboard(order_id),
+            reply_markup=order_keyboard(
+                order_id,
+                has_receipt=bool(str(order.get("receipt_file_id") or "").strip()),
+                status=order.get("status", "pending")
+            ),
             parse_mode=enums.ParseMode.HTML
         )
 
@@ -1910,6 +1916,10 @@ def register(app, config):
                 show_alert=True
             )
 
+            return
+
+        if not str(order.get("receipt_file_id") or "").strip():
+            await query.answer("مشتری هنوز رسید این سفارش را ارسال نکرده است.", show_alert=True)
             return
 
         if not approve_order(order_id, created_by=query.from_user.id):
@@ -1979,6 +1989,10 @@ def register(app, config):
 
             return
 
+        if not str(order.get("receipt_file_id") or "").strip():
+            await query.answer("برای رد پرداخت، ابتدا باید رسید سفارش ارسال شده باشد.", show_alert=True)
+            return
+
         if not reject_order(order_id):
             await query.answer(
                 "این سفارش در همین فاصله تغییر وضعیت داده است؛ دوباره فهرست سفارش‌ها را بررسی کنید.",
@@ -2044,7 +2058,7 @@ def register(app, config):
         await query.message.edit_text(
             f"🗑 سفارش #{order_id} بدون ارسال پیام به مشتری حذف شد.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ بازگشت به سفارش‌های دارای فیش", callback_data="admin_pending")]
+                [InlineKeyboardButton("⬅️ بازگشت به سفارش‌های در انتظار", callback_data="admin_pending")]
             ])
         )
         await query.answer("سفارش بدون اطلاع مشتری حذف شد.")
