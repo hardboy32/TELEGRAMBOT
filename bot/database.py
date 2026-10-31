@@ -762,7 +762,7 @@ def approve_order(order_id, created_by=None):
 
 
 def reject_order(order_id):
-    """Reject a pending order once and release its reserved coupon use."""
+    """Reject and permanently remove a pending order and its stored receipt."""
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("BEGIN IMMEDIATE")
@@ -775,21 +775,18 @@ def reject_order(order_id):
         conn.close()
         return False
 
-    cur.execute("""
-        UPDATE orders SET status = 'rejected'
-        WHERE id = ? AND status = 'pending'
-    """, (order_id,))
-    if cur.rowcount != 1:
-        conn.rollback()
-        conn.close()
-        return False
-
     if row["coupon"]:
         cur.execute("""
             UPDATE coupons
             SET used_count = MAX(0, used_count - 1)
             WHERE code = ?
         """, (str(row["coupon"]).upper(),))
+
+    cur.execute("DELETE FROM orders WHERE id = ? AND status = 'pending'", (order_id,))
+    if cur.rowcount != 1:
+        conn.rollback()
+        conn.close()
+        return False
 
     _rebalance_pending_order_balances(cur, row["user_id"])
     conn.commit()
