@@ -84,7 +84,7 @@ def _remember_receipt_target(user_id, order_id):
         and not str(item.get("receipt_file_id") or "").strip()
     ]
     if len(waiting) == 1:
-        _remember_receipt_target(user_id, order_id)
+        receipt_targets[user_id] = {"order_id": order_id}
     else:
         # More than one order needs a receipt: force an explicit order choice.
         receipt_targets.pop(user_id, None)
@@ -1153,7 +1153,7 @@ def register(app, config):
             "step": "waiting_receipt",
             "order_id": order_id
         }
-        receipt_targets[user_id] = {"order_id": order_id}
+        _remember_receipt_target(user_id, order_id)
 
         await query.message.edit_text(
             order_created(order_id, order_type),
@@ -1628,7 +1628,7 @@ def register(app, config):
             "step": "waiting_receipt",
             "order_id": order_id
         }
-        receipt_targets[user_id] = {"order_id": order_id}
+        _remember_receipt_target(user_id, order_id)
 
         await query.message.reply_text(
             order_created(order_id, "renew"),
