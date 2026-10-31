@@ -77,6 +77,19 @@ def _menu(config, user_id):
     )
 
 
+def _remember_receipt_target(user_id, order_id):
+    waiting = [
+        item for item in get_user_orders(user_id)
+        if item.get("status") == "pending"
+        and not str(item.get("receipt_file_id") or "").strip()
+    ]
+    if len(waiting) == 1:
+        _remember_receipt_target(user_id, order_id)
+    else:
+        # More than one order needs a receipt: force an explicit order choice.
+        receipt_targets.pop(user_id, None)
+
+
 def register(app, config):
 
     async def is_joined(client, user_id):
@@ -892,7 +905,7 @@ def register(app, config):
                     "step": "waiting_receipt",
                     "order_id": order_id
                 }
-                receipt_targets[user_id] = {"order_id": order_id}
+                _remember_receipt_target(user_id, order_id)
 
                 await message.reply_text(
                     order_created(
