@@ -975,7 +975,7 @@ def delete_order(order_id):
     cur = conn.cursor()
     cur.execute("BEGIN IMMEDIATE")
     order = cur.execute(
-        "SELECT status, coupon FROM orders WHERE id = ?",
+        "SELECT status, coupon, user_id FROM orders WHERE id = ?",
         (order_id,)
     ).fetchone()
 
@@ -1002,9 +1002,9 @@ def delete_order(order_id):
         """, (str(order["coupon"]).upper(),))
 
     cur.execute("DELETE FROM orders WHERE id = ?", (order_id,))
-    if order["status"] == "pending":
-        _rebalance_pending_order_balances(cur, order["user_id"])
     deleted = cur.rowcount == 1
+    if deleted and order["status"] == "pending":
+        _rebalance_pending_order_balances(cur, order["user_id"])
     conn.commit()
     conn.close()
     return deleted
