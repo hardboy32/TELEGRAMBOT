@@ -24,5 +24,7 @@
   "support_username": "@hermes_vpn1",
   "auto_backup_enabled": true,
   "auto_backup_hours": 1,
-  "auto_backup_user_id": 1706395698
+  "auto_backup_user_id": 1706395698,
+  "payment_card": "6219861971134266",
+  "payment_name": "محمد نجفی"
 }
