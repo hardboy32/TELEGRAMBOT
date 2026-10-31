@@ -584,6 +584,9 @@ def register(app, config):
                             and order.get("status") == "pending"):
                         from bot.database import delete_pending_order
                         delete_pending_order(order_id, user_id=user_id)
+                        target = receipt_targets.get(user_id) or {}
+                        if target.get("order_id") == order_id:
+                            receipt_targets.pop(user_id, None)
                 user_states.pop(user_id, None)
 
             elif not (state and state.get("step") in (
@@ -1272,10 +1275,12 @@ def register(app, config):
 
         order = get_order(order_id)
 
-        if not order or order["status"] != "pending":
+        if (not order or order.get("user_id") != user_id
+                or order["status"] != "pending"):
 
+            receipt_targets.pop(user_id, None)
             await message.reply_text(
-                "❌ این سفارش دیگر در انتظار بررسی نیست."
+                "❌ این سفارش متعلق به شما نیست یا دیگر در انتظار بررسی نیست."
             )
 
             return
