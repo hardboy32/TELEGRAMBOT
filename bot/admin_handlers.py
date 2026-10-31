@@ -422,7 +422,9 @@ def order_keyboard(order_id, has_receipt=True, status="pending"):
             "⏳ منتظر ارسال رسید مشتری",
             callback_data=f"admin_order_{order_id}"
         )])
-    if status == "approved":
+    # Keep the config action on the order detail card after approval;
+    # admins may have opened that card before approving the payment.
+    if has_receipt:
         rows.append([InlineKeyboardButton(
             "⚙️ ثبت کانفیگ",
             callback_data=f"admin_config_{order_id}"
