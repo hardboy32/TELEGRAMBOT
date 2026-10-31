@@ -77,6 +77,15 @@ def _menu(config, user_id):
     )
 
 
+def _customer_balance_text(user_id):
+    balance = int(get_customer_balance(user_id) or 0)
+    if balance > 0:
+        return f"📒 وضعیت حساب: بدهکار به مبلغ {format_price(balance)} تومان"
+    if balance < 0:
+        return f"📒 وضعیت حساب: بستانکار به مبلغ {format_price(abs(balance))} تومان"
+    return "📒 وضعیت حساب: تسویه (بدهی یا طلبی ندارید)"
+
+
 def _remember_receipt_target(user_id, order_id):
     waiting = [
         item for item in get_user_orders(user_id)
@@ -324,7 +333,8 @@ def register(app, config):
                 )
 
             await message.reply_text(
-                "🛒 سرویس موردنظر را انتخاب کنید:",
+                "🛒 سرویس موردنظر را انتخاب کنید:\n\n"
+                f"{_customer_balance_text(user_id)}",
                 reply_markup=services_reply_keyboard(services)
             )
 
@@ -344,7 +354,8 @@ def register(app, config):
             await message.reply_text(
                 "🔄 تمدید سرویس\n\n"
                 "👤 نام کاربری قبلی که موقع خرید استفاده کرده‌اید را بفرستید:\n"
-                "(بدون @)"
+                "(بدون @)\n\n"
+                f"{_customer_balance_text(user_id)}"
             )
 
             return
@@ -688,7 +699,7 @@ def register(app, config):
                         discount,
                         final_price,
                         "renew"
-                    ),
+                    ) + "\n\n" + _customer_balance_text(user_id),
                     reply_markup=confirm_reply_keyboard()
                 )
                 return
@@ -698,7 +709,8 @@ def register(app, config):
             await message.reply_text(
                 f"📦 سرویس: {service['name']}\n"
                 f"💾 حجم: {service['volume_gb']}GB\n"
-                f"💰 قیمت: {format_price(service['price'])} تومان\n\n"
+                f"💰 قیمت: {format_price(service['price'])} تومان\n"
+                f"{_customer_balance_text(user_id)}\n\n"
                 "👤 حالا نام کاربری دلخواه خود را ارسال کنید:\n"
                 "(بدون @ — یا «❌ لغو سفارش»)",
                 reply_markup=payment_reply_keyboard(
@@ -795,6 +807,7 @@ def register(app, config):
 
             await message.reply_text(
                 f"✅ نام کاربری: {username}\n\n"
+                f"{_customer_balance_text(user_id)}\n\n"
                 "📦 سرویس موردنظر برای تمدید را انتخاب کنید:",
                 reply_markup=services_reply_keyboard(services)
             )
@@ -1018,7 +1031,7 @@ def register(app, config):
                     username,
                     discount,
                     final_price
-                ),
+                ) + "\n\n" + _customer_balance_text(user_id),
                 reply_markup=confirm_order_keyboard()
             )
 
@@ -1065,7 +1078,8 @@ def register(app, config):
         await query.message.reply_text(
             f"📦 سرویس انتخاب شد: {service['name']}\n"
             f"💾 حجم: {service['volume_gb']}GB\n"
-            f"💰 قیمت: {format_price(service['price'])} تومان\n\n"
+            f"💰 قیمت: {format_price(service['price'])} تومان\n"
+            f"{_customer_balance_text(user_id)}\n\n"
             "👤 حالا نام کاربری دلخواه خود را ارسال کنید:"
         )
 
