@@ -981,13 +981,8 @@ def delete_order(order_id):
         conn.close()
         return False
 
-    linked_subscription = cur.execute(
-        "SELECT 1 FROM subscriptions WHERE order_id = ? LIMIT 1", (order_id,)
-    ).fetchone()
-    if linked_subscription and order["status"] == "approved":
-        conn.rollback()
-        conn.close()
-        return False
+    # Admin deletion also removes subscriptions created from this order.
+    cur.execute("DELETE FROM subscriptions WHERE order_id = ?", (order_id,))
 
     # A pending order reserves one coupon use. Releasing/deleting that order
     # must return the reservation so abandoned orders do not exhaust coupons.
