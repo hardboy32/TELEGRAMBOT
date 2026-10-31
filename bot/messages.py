@@ -53,16 +53,16 @@ def order_text(service, username, discount, final_price, order_type="buy", balan
     payable = max(0, int(final_price) + balance)
 
     if balance > 0:
-        text += f"📒 بدهی قبلی: {balance:,} تومان\\n"
+        text += f"📒 بدهی قبلی: {balance:,} تومان\n"
     elif balance < 0:
-        text += f"📒 اعتبار حساب: {abs(balance):,} تومان\\n"
+        text += f"📒 اعتبار حساب: {abs(balance):,} تومان\n"
 
-    text += f"💵 مبلغ قابل پرداخت: {payable:,} تومان\\n"
+    text += f"💵 مبلغ قابل پرداخت: {payable:,} تومان\n"
 
     if balance < 0 and abs(balance) > int(final_price):
-        text += f"🎁 اعتبار باقی‌مانده پس از این خرید: {abs(balance) - int(final_price):,} تومان\\n"
+        text += f"🎁 اعتبار باقی‌مانده پس از این خرید: {abs(balance) - int(final_price):,} تومان\n"
 
-    text += f"\\n{action}"
+    text += f"\n{action}"
 
     return text
 
