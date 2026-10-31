@@ -3028,7 +3028,7 @@ def register(app, config):
 
         if order:
             if not delete_order(order_id):
-                await query.answer("این سفارش به اشتراک فعال متصل است و برای حفظ سوابق قابل حذف نیست.", show_alert=True)
+                await query.answer("سفارش حذف نشد یا قبلاً حذف شده است.", show_alert=True)
                 return
 
         await query.answer("حذف شد.")
