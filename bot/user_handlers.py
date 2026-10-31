@@ -700,8 +700,8 @@ def register(app, config):
                         new_state["username"],
                         discount,
                         final_price,
-                        "renew"
-                    , balance=get_available_customer_balance(user_id)
+                        "renew",
+                        balance=get_available_customer_balance(user_id)
                     ),
                     reply_markup=confirm_reply_keyboard()
                 )
@@ -1033,8 +1033,8 @@ def register(app, config):
                     service,
                     username,
                     discount,
-                    final_price
-                    , balance=get_available_customer_balance(user_id)
+                    final_price,
+                    balance=get_available_customer_balance(user_id)
                 ),
                 reply_markup=confirm_order_keyboard()
             )
