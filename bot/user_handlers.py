@@ -65,6 +65,9 @@ from bot.messages import (
 from bot.state_store import PersistentStateMap
 
 user_states = PersistentStateMap("user", ttl_seconds=7 * 24 * 60 * 60)
+# Receipt targets are independent from the customer's current menu/workflow state.
+# This lets a customer start another order without losing older unpaid orders.
+receipt_targets = PersistentStateMap("user_receipt_targets", ttl_seconds=7 * 24 * 60 * 60)
 
 
 def _menu(config, user_id):
@@ -240,13 +243,6 @@ def register(app, config):
 
         state = user_states.get(user_id)
 
-        if (state and state.get("step") in ("waiting_receipt", "waiting_invoice_receipt")
-                and text in ("🎟️ کد تخفیف", "📚 آموزش")):
-            await message.reply_text(
-                "⏳ ابتدا رسید پرداخت ناتمام فعلی را ارسال کنید یا آن را لغو کنید."
-            )
-            return
-
         # Hiding a menu button is not access control: enforce feature toggles
         # on manually typed button labels as well.
         feature_by_text = {
@@ -315,12 +311,6 @@ def register(app, config):
             return
 
         if text == "🔄 تمدید":
-
-            if state and state.get("step") in ("waiting_receipt", "waiting_invoice_receipt"):
-                await message.reply_text(
-                    "⏳ ابتدا پرداخت ناتمام فعلی را تکمیل یا لغو کنید."
-                )
-                return
 
             if not config.get("renew_enabled", True):
                 await message.reply_text("⛔ گزینه تمدید فعلاً غیرفعال است.", reply_markup=_menu(config, user_id))
@@ -899,12 +889,19 @@ def register(app, config):
                     "step": "waiting_receipt",
                     "order_id": order_id
                 }
+                receipt_targets[user_id] = {"order_id": order_id}
 
                 await message.reply_text(
                     order_created(
                         order_id,
                         state.get("order_type", "buy")
-                    )
+                    ),
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton(
+                            f"📸 ارسال رسید سفارش #{order_id}",
+                            callback_data=f"receipt_order_{order_id}"
+                        )
+                    ]])
                 )
 
                 await message.reply_text(
@@ -1140,9 +1137,16 @@ def register(app, config):
             "step": "waiting_receipt",
             "order_id": order_id
         }
+        receipt_targets[user_id] = {"order_id": order_id}
 
         await query.message.edit_text(
-            order_created(order_id, order_type)
+            order_created(order_id, order_type),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    f"📸 ارسال رسید سفارش #{order_id}",
+                    callback_data=f"receipt_order_{order_id}"
+                )
+            ]])
         )
 
         order = get_order(order_id)
@@ -1237,19 +1241,33 @@ def register(app, config):
             )
             return
 
-        order_id = None
+        target = receipt_targets.get(user_id) or {}
+        order_id = target.get("order_id")
 
-        if state:
-            order_id = state.get("order_id")
-
-        # A receipt must belong to the exact order the user is currently paying.
-        # Never guess by attaching it to the oldest pending order.
+        # If only one order is awaiting a receipt, safely select it. If several
+        # are open, require the customer to tap that order's own receipt button.
         if not order_id:
+            waiting_orders = [
+                item for item in get_user_orders(user_id)
+                if item.get("status") == "pending"
+                and not str(item.get("receipt_file_id") or "").strip()
+            ]
+            if len(waiting_orders) == 1:
+                order_id = waiting_orders[0]["id"]
+                receipt_targets[user_id] = {"order_id": order_id}
+            elif len(waiting_orders) > 1:
+                rows = [[InlineKeyboardButton(
+                    f"📸 رسید سفارش #{item['id']} — {item['service_name']}",
+                    callback_data=f"receipt_order_{item['id']}"
+                )] for item in waiting_orders[:20]]
+                await message.reply_text(
+                    "برای جلوگیری از ثبت رسید روی سفارش اشتباه، سفارش مربوطه را انتخاب کنید:",
+                    reply_markup=InlineKeyboardMarkup(rows)
+                )
+                return
 
-            await message.reply_text(
-                "❌ سفارش در انتظاری برای این رسید پیدا نشد."
-            )
-
+        if not order_id:
+            await message.reply_text("❌ سفارش در انتظاری برای این رسید پیدا نشد.")
             return
 
         order = get_order(order_id)
@@ -1276,10 +1294,11 @@ def register(app, config):
             )
             return
 
-        user_states.pop(
-            user_id,
-            None
-        )
+        receipt_targets.pop(user_id, None)
+        current_state = user_states.get(user_id) or {}
+        if (current_state.get("step") == "waiting_receipt"
+                and current_state.get("order_id") == order_id):
+            user_states.pop(user_id, None)
 
         for admin_id in config.get(
             "admin_ids",
@@ -1359,10 +1378,29 @@ def register(app, config):
             reply_markup=_menu(config, user_id)
         )
 
+    @app.on_callback_query(filters.regex(r"^receipt_order_\d+$"))
+    async def select_receipt_order(client, query):
+        user_id = query.from_user.id
+        order_id = int(query.data.rsplit("_", 1)[1])
+        order = get_order(order_id)
+        if (not order or order.get("user_id") != user_id
+                or order.get("status") != "pending"
+                or str(order.get("receipt_file_id") or "").strip()):
+            await query.answer(
+                "این سفارش متعلق به شما نیست یا دیگر منتظر رسید نیست.",
+                show_alert=True
+            )
+            return
+        receipt_targets[user_id] = {"order_id": order_id}
+        await query.answer("سفارش انتخاب شد.")
+        await query.message.reply_text(
+            f"📸 حالا عکس رسید پرداخت سفارش #{order_id} را ارسال کنید."
+        )
+
     @app.on_callback_query(filters.regex("^invoice_pay_[0-9]+$"))
     async def invoice_pay(client, query):
         current_state = user_states.get(query.from_user.id) or {}
-        if current_state.get("step") in ("waiting_receipt", "waiting_invoice_receipt"):
+        if current_state.get("step") == "waiting_invoice_receipt":
             await query.answer(
                 "ابتدا پرداخت ناتمام فعلی را تکمیل یا لغو کنید.",
                 show_alert=True
@@ -1447,7 +1485,7 @@ def register(app, config):
     async def renew_selected(client, query):
 
         current_state = user_states.get(query.from_user.id) or {}
-        if current_state.get("step") in ("waiting_receipt", "waiting_invoice_receipt"):
+        if current_state.get("step") == "waiting_invoice_receipt":
             await query.answer("ابتدا پرداخت ناتمام فعلی را تکمیل یا لغو کنید.", show_alert=True)
             return
 
@@ -1572,9 +1610,16 @@ def register(app, config):
             "step": "waiting_receipt",
             "order_id": order_id
         }
+        receipt_targets[user_id] = {"order_id": order_id}
 
         await query.message.reply_text(
-            order_created(order_id, "renew")
+            order_created(order_id, "renew"),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    f"📸 ارسال رسید سفارش #{order_id}",
+                    callback_data=f"receipt_order_{order_id}"
+                )
+            ]])
         )
 
         order = get_order(order_id)
