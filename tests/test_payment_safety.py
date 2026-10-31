@@ -60,6 +60,25 @@ class PaymentSafetyTests(unittest.TestCase):
         self.assertTrue(database.approve_order(second))
         self.assertEqual(database.get_customer_balance(100), 0)
 
+    def test_unused_credit_moves_to_next_pending_order_after_approval(self):
+        database.add_customer_ledger_entry(100, -1000, "additional credit")
+        first = database.create_order(
+            user_id=100, service_id=None, service_name="Small",
+            order_type="buy", username="customer", original_price=100,
+            discount_percent=0, final_price=100
+        )
+        second = self._order()
+
+        self.assertEqual(database.get_order(first)["balance_before"], -500)
+        self.assertEqual(database.get_order(second)["balance_before"], 0)
+
+        self.assertTrue(database.set_receipt(first, "receipt-first"))
+        self.assertTrue(database.approve_order(first))
+
+        second_order = database.get_order(second)
+        self.assertEqual(second_order["balance_before"], -400)
+        self.assertEqual(second_order["expected_total"], 600)
+
     def test_admin_pending_list_includes_orders_without_receipts(self):
         first = self._order()
         second = self._order()
