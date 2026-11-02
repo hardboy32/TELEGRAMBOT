@@ -70,6 +70,8 @@ user_states = PersistentStateMap("user", ttl_seconds=7 * 24 * 60 * 60)
 # Receipt targets are independent from the customer's current menu/workflow state.
 # This lets a customer start another order without losing older unpaid orders.
 receipt_targets = PersistentStateMap("user_receipt_targets", ttl_seconds=7 * 24 * 60 * 60)
+# Keep invoice receipt selection separate from the menu/order workflow.
+invoice_receipt_targets = PersistentStateMap("user_invoice_receipt_targets", ttl_seconds=7 * 24 * 60 * 60)
 
 
 def _menu(config, user_id):
@@ -266,13 +268,6 @@ def register(app, config):
         text = message.text.strip()
 
         state = user_states.get(user_id)
-
-        if (state and state.get("step") == "waiting_invoice_receipt"
-                and text in ("🛒 خرید سرویس", "🔄 تمدید", "🎟️ کد تخفیف", "📚 آموزش")):
-            await message.reply_text(
-                "⏳ ابتدا رسید فاکتور فعلی را ارسال کنید یا پرداخت آن را لغو کنید."
-            )
-            return
 
         # Hiding a menu button is not access control: enforce feature toggles
         # on manually typed button labels as well.
@@ -623,10 +618,7 @@ def register(app, config):
                             receipt_targets.pop(user_id, None)
                 user_states.pop(user_id, None)
 
-            elif not (state and state.get("step") in (
-                    "waiting_receipt",
-                    "waiting_invoice_receipt"
-            )):
+            elif not (state and state.get("step") == "waiting_receipt"):
                 user_states.pop(user_id, None)
 
             await message.reply_text(
@@ -1230,7 +1222,8 @@ def register(app, config):
 
         state = user_states.get(user_id)
 
-        invoice_id = state.get("invoice_id") if state else None
+        invoice_target = invoice_receipt_targets.get(user_id) or {}
+        invoice_id = invoice_target.get("invoice_id")
         if invoice_id:
             invoice = get_invoice(invoice_id)
             if not invoice or invoice["user_id"] != user_id or invoice["status"] != "pending":
@@ -1241,7 +1234,7 @@ def register(app, config):
             if not set_invoice_receipt(invoice_id, receipt_id):
                 await message.reply_text("ثبت رسید انجام نشد؛ دوباره تلاش کنید.")
                 return
-            user_states.pop(user_id, None)
+            invoice_receipt_targets.pop(user_id, None)
             if not invoice.get("approval_required", 1):
                 if mark_invoice_paid(invoice_id):
                     try:
@@ -1445,14 +1438,6 @@ def register(app, config):
 
     @app.on_callback_query(filters.regex("^invoice_pay_[0-9]+$"))
     async def invoice_pay(client, query):
-        current_state = user_states.get(query.from_user.id) or {}
-        if current_state.get("step") == "waiting_invoice_receipt":
-            await query.answer(
-                "ابتدا پرداخت ناتمام فعلی را تکمیل یا لغو کنید.",
-                show_alert=True
-            )
-            return
-
         invoice_id = int(query.data.split("_")[-1])
         invoice = get_invoice(invoice_id)
         if not invoice or invoice["user_id"] != query.from_user.id:
@@ -1469,14 +1454,32 @@ def register(app, config):
                 await query.answer("تسویه فاکتور انجام نشد؛ با پشتیبانی تماس بگیرید.", show_alert=True)
             return
         remaining_amount = max(0, int(invoice["total_amount"]) - int(invoice.get("paid_amount") or 0))
-        user_states[query.from_user.id] = {"step": "waiting_invoice_receipt", "invoice_id": invoice_id}
+        invoice_receipt_targets[query.from_user.id] = {"invoice_id": invoice_id}
         await query.message.reply_text(
             f"💰 مبلغ باقی‌مانده قابل پرداخت: {format_price(remaining_amount)} تومان\n"
             f"💳 شماره کارت: {config.get('payment_card', 'YOUR_CARD')}\n"
             f"👤 صاحب کارت: {config.get('payment_name', 'CARD_OWNER')}\n\n"
-            "پس از پرداخت، عکس رسید را ارسال کنید."
+            "پس از پرداخت، عکس رسید همین فاکتور را ارسال کنید.\n"
+            "برای پرداخت فاکتور دیگر، از بخش حساب من آن را انتخاب کنید.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ لغو انتخاب این فاکتور", callback_data=f"invoice_cancel_{invoice_id}")
+            ]])
         )
         await query.answer()
+
+    @app.on_callback_query(filters.regex("^invoice_cancel_[0-9]+$"))
+    async def invoice_cancel_payment(client, query):
+        invoice_id = int(query.data.rsplit("_", 1)[1])
+        invoice = get_invoice(invoice_id)
+        if not invoice or invoice.get("user_id") != query.from_user.id:
+            await query.answer("این فاکتور متعلق به شما نیست.", show_alert=True)
+            return
+        target = invoice_receipt_targets.get(query.from_user.id) or {}
+        if target.get("invoice_id") == invoice_id:
+            invoice_receipt_targets.pop(query.from_user.id, None)
+        await query.answer("انتخاب پرداخت این فاکتور لغو شد.")
+        await query.message.reply_text("✅ انتخاب این فاکتور لغو شد؛ فاکتورهای دیگر شما تغییری نکردند.")
+
     @app.on_callback_query(
         filters.regex(r"^sub_\d+$")
     )
@@ -1571,11 +1574,6 @@ def register(app, config):
         filters.regex(r"^renew_\d+$")
     )
     async def renew_selected(client, query):
-
-        current_state = user_states.get(query.from_user.id) or {}
-        if current_state.get("step") == "waiting_invoice_receipt":
-            await query.answer("ابتدا پرداخت ناتمام فعلی را تکمیل یا لغو کنید.", show_alert=True)
-            return
 
         sub_id = int(
             query.data.split("_")[1]
